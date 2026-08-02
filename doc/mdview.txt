@@ -1,0 +1,444 @@
+*mdview.txt*    Terminal-only markdown viewer using tree-sitter
+
+Author:  akito19
+License: MIT
+
+==============================================================================
+CONTENTS                                                       *mdview-contents*
+
+  1. Introduction ................................. |mdview-introduction|
+  2. Requirements ................................. |mdview-requirements|
+  3. Commands ..................................... |mdview-commands|
+  4. Rendering & glyph set ........................ |mdview-glyphs|
+     Wrapping & scrolling ......................... |mdview-wrapping|
+  5. Configuration ................................ |mdview-configuration|
+  6. Highlight groups ............................. |mdview-highlights|
+  7. Lua API ...................................... |mdview-api|
+  8. Future work .................................. |mdview-future|
+
+==============================================================================
+1. INTRODUCTION                                            *mdview-introduction*
+
+mdview.nvim renders the current markdown buffer as decorated text in a split
+window. Parsing uses Neovim's built-in tree-sitter markdown grammars; the
+preview is a scratch buffer with markdown markers stripped and highlights,
+extmarks and virtual text applied.
+
+While the preview is open, saving the source buffer (`:w`) re-parses and
+re-renders it automatically. Closing the preview window (e.g. with |:q|) or
+wiping the source buffer tears the session down. Each markdown buffer owns an
+independent preview.
+
+==============================================================================
+2. REQUIREMENTS                                            *mdview-requirements*
+
+- Neovim 0.10 or later
+- Bundled `markdown` and `markdown_inline` tree-sitter parsers (shipped with
+  Neovim)
+
+No external runtime dependencies.
+
+==============================================================================
+3. COMMANDS                                                    *mdview-commands*
+
+                                                                       *:MdView*
+:MdView [{direction}]
+    Open (or re-render) the preview for the current markdown buffer.
+    {direction} is "vertical" or "horizontal" and overrides the configured
+    split direction for this invocation; when omitted, the configured `split`
+    value (default "vertical") is used. If the current buffer's 'filetype' is
+    not "markdown", a warning is shown and nothing happens.
+
+                                                                  *:MdViewClose*
+:MdViewClose
+    Close the preview associated with the current buffer. Works from the
+    source buffer or from inside the preview window. When the buffer has no
+    preview, an informational message says so and nothing else happens.
+
+                                                                 *:MdViewToggle*
+:MdViewToggle [{direction}]
+    Toggle the preview for the current buffer.
+
+==============================================================================
+4. RENDERING & GLYPH SET                                          *mdview-glyphs*
+
+The target is GitHub's rendered Markdown, as closely as a terminal allows.
+Terminals cannot vary font size, so heading level is encoded as the LENGTH of
+a bar: one `█` glyph per `#` in the source, left-aligned in a fixed gutter
+(`heading.gutter`, default 6), so the staircase grows from the left edge while
+the heading text stays at one constant column at every level. >
+
+    █       Heading One      H1 -- 1 cell, then a dim underline band
+    ██      Heading Two      H2 -- 2 cells, then a dim underline band
+    ███     Heading Three    H3 -- 3 cells
+    ████    Heading Four     H4 -- 4 cells
+    █████   Heading Five     H5 -- 5 cells
+    ██████  Heading Six      H6 -- 6 cells
+
+      • top level            real bullets, one shape per depth
+        ‣ second level
+          · third level
+      1. ordered item
+      [ ] task
+
+    █ quoted paragraph       blockquote: one █ per nesting depth
+    ██ nested quote
+
+      lua                    code block: a full-width grey band with a
+      local x = 1            dim language label, content indented 2 cells
+
+      ┌──────────┬──────────────┐   tables: a box-drawing grid,
+      │ Command  │ Description  │   ruled between every row,
+      ├──────────┼──────────────┤   with a shaded bold header
+      │ :MdView  │ Open preview │
+      └──────────┴──────────────┘
+<
+Horizontal rules are a full-width tinted band, not repeated characters, and
+inline code is rendered as a shaded chip.
+
+WHICH CHARACTERS ARE SAFE
+
+Two different questions decide this, and they have different answers.
+
+Box drawing (U+2500-257F) and block elements (U+2580-259F) are SAFE, because
+the terminal draws them itself: Ghostty renders those two ranges with its own
+built-in sprite renderer rather than pulling glyphs from the configured font,
+so they tile perfectly -- horizontally AND vertically -- whatever the font
+covers. That is why tables get a real grid.
+
+Everything outside those ranges is only as good as the font's coverage.
+Parsing the `cmap` of Monaco -- a common terminal font, used here as a
+conservative proxy for "safe" -- shows the obvious choices are simply ABSENT:
+`● ◦ ▪ ■ ☐ ☑` are not in the font at all, so the terminal substitutes them
+from a fallback face whose metrics do not match the cell. mdview never emits
+them, and checkboxes stay ASCII `[ ]` / `[x]`.
+
+The complete set of non-ASCII characters mdview's own decoration emits:
+
+  █             U+2588 FULL BLOCK          heading bars, blockquote bars
+  •             U+2022 BULLET              list bullet, depth 1
+  ‣             U+2023 TRIANGULAR BULLET   list bullet, depth 2
+  ·             U+00B7 MIDDLE DOT          list bullet, depth 3
+  ┌┬┐├┼┤└┴┘─│   U+2500-257F box drawing    table grid
+
+v2 dropped box drawing after blaming the font for the gaps between `─` glyphs.
+The diagnosis was wrong: the terminal never asked the font for them. The
+heading bars that looked identical in v2 were a separate problem -- `█` and
+`▉` differ by one eighth of a cell, roughly a pixel -- and bar LENGTH fixed
+that in v4.
+
+MARKER_STYLE = "BLOCK"
+
+For terminals that do NOT draw those ranges natively, `marker_style = "block"`
+keeps the identical layout but draws every marker cell as an ordinary SPACE
+carrying a background highlight. A space has no glyph outline, so a run of them
+is a solid rectangle at exact cell metrics in any font, with no fallback
+involved, and the rendered buffer becomes pure ASCII plus the document's own
+text. Tables then lose their grid and their columns are separated by padding
+alone.
+
+Background colours are computed, not hardcoded: the element's foreground
+colour is blended into `Normal`'s background at a chosen alpha, and recomputed
+on |ColorScheme|. When `Normal.bg` cannot be resolved (transparent terminal, no
+'termguicolors'), the tint backgrounds are skipped -- but the marker groups
+fall back to `reverse` so they stay visible: an invisible marker would
+silently erase the hierarchy.
+
+Two elements have no marker to fall back on: a fenced block's fences are
+stripped at parse time, and a horizontal rule IS a blank line, so the band is
+the whole of their presentation. Instead of vanishing, `MdviewCodeBlock` links
+to `CursorLine` and `MdviewRuleBg` to `Visual` -- different groups, so a
+divider never reads as a code block. Also applies under
+`highlights.blend = false`.
+
+WRAPPING & SCROLLING                                            *mdview-wrapping*
+
+The preview window is ALWAYS 'nowrap'. 'wrap' is window-local, so it could not
+reflow prose while leaving a wide table intact -- mdview therefore hard-wraps
+the body text itself, to the preview window's live width.
+
+  Wrapped:      paragraphs, list items, blockquote content, headings
+  Never wrapped: tables, code blocks, horizontal rules
+
+The blocks that are never wrapped extend past the right edge and are read by
+scrolling sideways with |zl| / |zh| or the mouse. 'sidescrolloff' is 0 in the
+preview so scrolling reaches column 0 again, and the global 'sidescroll' is
+nudged from 0 (half a screen at a time) to 1 (smooth) unless you have set it
+yourself. Neovim 0.12 already defaults to 1, so this only applies on 0.10 and
+0.11. Because 'sidescroll' is global-only, the displaced value is put back
+when the last preview closes -- and left alone if you changed it meanwhile.
+
+Continuation lines keep a hanging indent, so wrapped text lines up under the
+first line's text rather than under its marker: >
+
+      • a list item whose text is long enough to need
+        a second line
+    █ a blockquote that also runs past the available
+    █ width
+<
+List items indent to the end of their marker slot, blockquotes repeat the `█`
+bar at the same depth, and headings indent to the text column without
+repeating the bar.
+
+Consecutive list items share one marker slot per depth, sized to the widest
+marker among them, so the text column holds where the markers do not: numbers
+are right-aligned in it (`9.` beside `10.`), and a `[ ]` checkbox beside a `•`
+bullet pads the bullet out rather than shifting its neighbour's text.
+
+The blank line between two blocks is not blank inside a blockquote -- it
+carries the bars the two blocks have in common, so the bar runs down the whole
+quote instead of breaking at every paragraph.
+
+Wrapping is measured in DISPLAY CELLS (|strdisplaywidth()|), not bytes or
+characters, so CJK is handled correctly. Japanese has no spaces, so a break is
+allowed between any two full-width characters, with minimal kinsoku shori:
+`。、」』）］｝〕・？！` never start a line and `「『（［｛〔` never end one. A
+word wider than the whole target width is emitted on its own long line.
+
+Wrapping stops below a floor of 8 cells. A heading's gutter alone is 8 cells
+(14 under 'ambiwidth' "double"), so a narrow split can leave less room than a
+couple of CJK characters; below the floor the block is emitted long and
+scrolls sideways like a table, instead of trickling down two syllables a line.
+
+Inline highlight spans (bold, italic, inline code, links) that cross a break
+are split into one decoration per emitted line.
+
+Resizing the preview reflows it. The width is compared against the one used for
+the last render, so resizing an unrelated window costs nothing.
+
+`wrap = false` turns hard-wrapping off entirely: every block becomes one long
+logical line and the whole buffer scrolls. `text_width` only ever CAPS the
+width, so text never runs off the right edge.
+
+==============================================================================
+5. CONFIGURATION                                          *mdview-configuration*
+
+Calling `setup()` is optional; the plugin works with the defaults below: >lua
+
+    require("mdview").setup({
+      split = "vertical",        -- "vertical" | "horizontal"
+      -- A size <= 1 is a fraction of the screen, above 1 an absolute cell
+      -- count -- so `width = 1` is the FULL screen, not one column.
+      width = 0.5,               -- fraction of 'columns', or integer columns
+      height = 0.5,              -- fraction of 'lines', or integer rows
+      -- The preview window is always 'nowrap'; see |mdview-wrapping|.
+      wrap = true,               -- hard-wrap body text in the renderer
+      text_width = nil,          -- nil = the preview's live width; a number
+                                 -- caps it
+      code_block_syntax = true,  -- highlight fenced code blocks per language
+      elements = {
+        headings = true,
+        emphasis = true,
+        code_blocks = true,
+        lists = true,
+        blockquotes = true,
+        links = true,
+        tables = true,
+        horizontal_rules = true,
+      },
+      -- how every bar / bullet / border is drawn:
+      --   "glyph" -- real characters, from the verified-safe set only
+      --   "block" -- spaces carrying a background highlight (any font)
+      marker_style = "glyph",
+      heading = {
+        gutter = 6,              -- bar gutter width in cells; the bar is
+                                 -- `level` cells, LEFT-aligned
+        bar = "█",               -- U+2588; fills its cell
+        bold = true,             -- heading text is bold
+        underline_levels = 2,    -- levels 1..N get the border-bottom band
+      },
+      code = {
+        language_label = true,   -- header line carrying the fence language
+        line_numbers = false,    -- right-aligned line numbers in the gutter
+      },
+      tables = {
+        borders = true,          -- full box-drawing grid; false = `│` only
+        zebra = false,           -- redundant once every row is ruled
+      },
+      highlights = {
+        blend = true,            -- compute background groups from Normal.bg
+      },
+      icons = {
+        bullets = { "•", "‣", "·" },   -- cycled by nesting depth
+        -- ASCII checkboxes: no font can be assumed to have ☐ / ☑
+        checkbox = { unchecked = "[ ]", checked = "[x]" },
+      },
+    })
+<
+Setting an entry of `elements` to `false` renders that element as plain text
+with no decoration at all (e.g. `tables = false` prints rows joined by " | ",
+`headings = false` prints the heading text with no marker).
+
+`highlights.blend = false` keeps the markers but skips every computed tint
+background.
+
+`heading.underline_levels = 0` disables the H1/H2 band entirely; 6 gives every
+level one. A heading level deeper than `heading.gutter` still gets a 1-cell
+bar -- a zero-width marker would be invisible. Lists nested deeper than
+`#icons.bullets` cycle back to the first bullet, and their colour cycles too.
+
+`tables.borders = false` drops the horizontal rules and separates columns with
+`│` alone (the v4 look); `tables.zebra = true` brings the alternating row tint
+back on top of either.
+
+Under `marker_style = "block"` the layout is unchanged but `heading.bar`,
+`icons.bullets` and `tables.borders` are ignored: bar and bullet cells become
+background-coloured spaces and table columns are separated by padding alone.
+`icons.checkbox` and every other key apply to both styles. An invalid
+`marker_style` warns and falls back to "glyph".
+
+VALIDATION                                            *mdview-config-validation*
+
+`setup()` validates its argument rather than merging it blindly:
+
+- an unrecognised key is reported by its full path and dropped, so a typo
+  such as `marker_syle = "block"` or `elements.headins = false` warns instead
+  of silently doing nothing;
+- a value of the wrong type warns and the default is kept;
+- a `split`, `marker_style`, `width`, `height` or `text_width` that is the
+  right type but out of range warns and falls back to its default.
+
+List-valued options -- currently only `icons.bullets` -- REPLACE the default
+instead of merging into it, because |vim.tbl_deep_extend()| merges lists
+index-by-index: `icons.bullets = { "•" }` is a one-entry cycle, not
+`{ "•", "‣", "·" }`. Nested tables such as `icons.checkbox` still merge
+key by key, so setting only `checked` leaves `unchecked` at its default.
+
+REMOVED IN v5
+
+`tables.separator`, replaced by the border set (see |mdview-glyphs|).
+
+REMOVED IN v4
+
+`heading.bars`, `heading.background`, `heading.padding`, `icons.quote_bars`
+and `code.bar`. The graduated heading backgrounds differed by only a few
+percent of alpha, which is invisible in practice; bar length carries the
+hierarchy instead.
+
+==============================================================================
+6. HIGHLIGHT GROUPS                                          *mdview-highlights*
+
+Foreground groups are defined with `default = true` and can be overridden from
+a colorscheme or |nvim_set_hl()|:
+
+  MdviewH1 .. MdviewH6      Heading text
+  MdviewHeadingBold         Bold attribute painted over the heading text
+  MdviewBold                Bold text
+  MdviewItalic              Italic text
+  MdviewBoldItalic          Bold + italic text
+  MdviewStrikethrough       Strikethrough text
+  MdviewCode                Inline code foreground
+  MdviewCodeHeader          Code block language header line
+  MdviewCodeLineNr          Code block line numbers (when enabled)
+  MdviewLink                Link text
+  MdviewQuote               Blockquote body text
+  MdviewBullet              Ordered list numbers
+  MdviewCheckbox            Task list checkboxes
+  MdviewTableHead           Table header cells (bold)
+  MdviewTableBorder         Table grid: ┌ ┬ ┐ ├ ┼ ┤ └ ┴ ┘ ─ │
+  MdviewTableSep            Table column separator (tables.borders = false)
+
+MdviewHeadingBold is a separate group because Neovim cannot attach extra
+attributes to a `default = true` link, and the level colour has to keep coming
+from one. It is emitted only while `heading.bold` is set.
+
+Background groups are computed by blending a foreground colour into `Normal`'s
+background, because the shading has to stay consistent regardless of the
+colorscheme. They are therefore NOT `default = true` links:
+
+  MdviewCodeBg              Inline code chip background
+  MdviewCodeBlock           Fenced code block band
+  MdviewHeadingUnderline    The H1/H2 underline band
+  MdviewQuoteBg             Blockquote line background
+  MdviewTableHeadBg         Table header row background
+  MdviewTableZebra          Alternating table body row background
+  MdviewRuleBg              Horizontal rule band
+
+Computed foreground groups dim with nesting depth; when no colour can be
+resolved they link back to their source rather than being cleared:
+
+  MdviewBullet1 .. 3        List bullet glyphs, by depth
+
+Marker groups carry the same colour as BOTH foreground and background, so one
+group serves both marker styles: `█` fills its cell under "glyph", and the
+same group paints a space under "block":
+
+  MdviewH1Bar .. MdviewH6Bar    Heading bar, in that heading's colour
+  MdviewQuoteBar                Blockquote bars
+  MdviewBulletBar1 .. 3         List bullet cells ("block" style only)
+
+When no colour can be resolved -- no 'termguicolors', unset `Normal.bg`, or
+`highlights.blend = false` -- the `*Bg` groups are cleared but the `*Bar`
+groups fall back to `reverse` (gui and cterm) so the markers still render as
+solid blocks from the terminal's own palette.
+
+Reinstated in v5: MdviewTableBorder, dropped in v2 when the grid was removed.
+
+Removed in v4: MdviewH1Bg..MdviewH6Bg, MdviewQuoteBar1..3, MdviewBulletBar4,
+MdviewCodeBar and MdviewCodeBarBlock.
+
+All of these are recomputed on |ColorScheme|; to override one, set it with
+|nvim_set_hl()| from your own `ColorScheme` autocommand (ordered after
+mdview's).
+
+==============================================================================
+7. LUA API                                                          *mdview-api*
+
+This is the whole supported surface. `mdview.window` and `mdview.highlights`
+are internal and change shape without notice; the `Mdview*` highlight GROUP
+names they define are public (see |mdview-highlights|).
+
+                                                                *mdview.setup()*
+require("mdview").setup({opts})
+    Merge {opts} over the defaults, validating them (see
+    |mdview-config-validation|). Returns the merged configuration, which is
+    the same table |mdview-configuration| describes.
+
+                                                                 *mdview.open()*
+require("mdview").open({direction})
+    Open (or re-render) the preview for the current buffer. {direction} is
+    "vertical" or "horizontal"; when omitted the configured `split` value
+    (default "vertical") is used.
+    Returns false, having warned, when the current buffer is not markdown.
+
+                                                                *mdview.close()*
+require("mdview").close()
+    Close the preview associated with the current buffer. Works from either
+    side of a session -- the source buffer or the preview buffer.
+    Returns false when this buffer had no preview, and says so at
+    |vim.log.levels|.INFO.
+
+                                                               *mdview.toggle()*
+require("mdview").toggle({direction})
+    Toggle the preview for the current buffer. {direction} is passed to
+    |mdview.open()| when this opens one. Returns whether a preview is open
+    afterwards.
+
+                                                              *mdview.is_open()*
+require("mdview").is_open({buf})
+    Whether a preview is open for {buf}, defaulting to the current buffer.
+    Accepts either side of a session, so a preview buffer answers as
+    truthfully as its source does. Use this for a statusline component or a
+    conditional keymap. >lua
+
+        vim.keymap.set("n", "<leader>m", function()
+          if require("mdview").is_open() then
+            require("mdview").close()
+          else
+            require("mdview").open("horizontal")
+          end
+        end)
+<
+
+==============================================================================
+8. FUTURE WORK                                                   *mdview-future*
+
+Out of scope for now:
+
+- Scroll sync between source and preview
+- Live rendering on |TextChanged| (currently on |:w| only)
+- Opening links with |gx| from the preview
+- Footnotes
+- Rendered HTML blocks (currently shown as raw text)
+
+vim:tw=78:ts=8:noet:ft=help:norl:
