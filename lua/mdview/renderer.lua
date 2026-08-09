@@ -43,6 +43,11 @@
 --- All line numbers are 0-based.
 local M = {}
 
+-- Also pure: plain Lua in, `{ lines, decorations }` out, no buffer or window.
+-- Diagram layout is a large, self-contained problem, so it lives in its own
+-- module rather than swelling the one that already holds the most logic.
+local mermaid = require("mdview.mermaid")
+
 local style_hl = {
   bold = "MdviewBold",
   italic = "MdviewItalic",
@@ -308,6 +313,7 @@ function M.render(blocks, config, opts)
   local heading_cfg = config.heading or {}
   local code_cfg = config.code or {}
   local table_cfg = config.tables or {}
+  local mermaid_cfg = config.mermaid or {}
   -- Only an explicit "block" selects the v3 background-space markers.
   local block_style = config.marker_style == "block"
 
@@ -542,6 +548,40 @@ function M.render(blocks, config, opts)
     local base = qp .. ind
     local body = #b.lines > 0 and b.lines or { "" }
     local has_lang = b.lang ~= nil and b.lang ~= ""
+
+    -- A ```mermaid fence becomes a drawn diagram when it falls inside the
+    -- supported subset. `render` returns nil for everything else -- an
+    -- unsupported construct, a cycle, the block marker style -- and the fence
+    -- then renders as the ordinary code block below, exactly as before.
+    --
+    -- The dispatch lives here rather than in `parser.lua` on purpose: keeping
+    -- it a `code_block` in the IR is what makes the fallback a no-op instead of
+    -- a decision the parser would have to make before it could know.
+    if has_lang and b.lang:lower() == "mermaid" and elements.mermaid ~= false then
+      local diagram = mermaid.render(b.lines, {
+        prefix = base .. "  ",
+        marker_style = config.marker_style,
+        max_nodes = mermaid_cfg.max_nodes,
+        max_edges = mermaid_cfg.max_edges,
+      })
+      if diagram then
+        if mermaid_cfg.language_label ~= false then
+          local l = add_line(base .. "  " .. b.lang)
+          quote_bar_hl(l, b)
+          add_hl(l, #base + 2, #lines[l + 1], "MdviewCodeHeader", PRI_STRUCT)
+        end
+        local first = #lines
+        for _, dl in ipairs(diagram.lines) do
+          local l = add_line(dl)
+          quote_deco(l, b)
+        end
+        for _, dec in ipairs(diagram.decorations) do
+          dec.line = dec.line + first
+          add_dec(dec)
+        end
+        return
+      end
+    end
 
     local function band(l)
       quote_bar_hl(l, b)

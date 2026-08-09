@@ -106,3 +106,58 @@ when auditing alignment.
 
 **Rule extracted:** measure, never count. And when a measurement says the layout
 is broken, confirm with a second measure before changing the layout.
+
+## 7. Mermaid — drawn, not shelled out
+
+[Issue #1](https://github.com/akito19/mdview.nvim/issues/1) asked for mermaid
+rendering and, correctly, treated it as a design question rather than a feature
+request. Three directions were on the table.
+
+**Rejected: an external renderer** (`mmdc`, or a terminal image protocol). It is
+the fastest route to real diagrams and it contradicts the goal statement
+outright — no browser, no external process, no runtime dependency. It also could
+not be covered by the headless test suite, which is the only thing standing
+between this project and silent regressions.
+
+**Rejected: documenting it as out of scope.** Defensible, and the issue said so —
+but the constraint turned out not to bind. Box drawing was already in the safe
+set, and a layered layout is a pure function, so the feature fits the
+architecture as it stands.
+
+**Chosen: draw a narrow subset in pure Lua.** `flowchart` only, rectangles only,
+DAGs only; everything else falls back to the labelled code block that was already
+there. The fallback is what makes an incremental subset safe — the failure mode
+is exactly today's behaviour.
+
+Four decisions inside that, each of which cost something:
+
+**The canvas column is `strdisplaywidth("─")` cells.** Decision 6 says measure,
+never count; this goes further and makes the *unit of layout* the thing that
+moves under `ambiwidth`. A glyph fills one column by definition and text is
+padded to a whole number of them, so alignment cannot drift — it is not a
+property to be verified afterwards but one the representation cannot express the
+violation of. Rows are padded rather than right-trimmed so "every row is the same
+width" is an exact, directly assertable property.
+
+**Lines merge by bitmask, not by case analysis.** Cells accumulate
+up/down/left/right bits and the glyph is picked once at the end. Crossings,
+T-junctions and box-border joins all fall out of the OR. The sixteen masks map
+onto exactly the eleven box-drawing characters already permitted, so the feature
+added **no new glyph** and decision 3's `cmap` finding still holds unchallenged.
+
+**Ports are aligned, not boxes.** The first attempt centred each layer over the
+widest one, following the obvious reading of "centre it". A box's port sits at
+`floor(w/2)`, so two boxes whose widths differ in parity — `Parse` at 9 columns
+and `Layout` at 10 — end up with ports one column apart, and a straight chain
+jogged at *every* step. Each item now aims its port at the mean port of its
+predecessors and the layer is shifted to follow. A chain comes out straight.
+
+**Shapes are not differentiated.** `A(x)`, `A{x}` and `A((x))` all draw as
+rectangles. Rounded corners would need `╭╮╰╯` — safe in principle, being inside
+the terminal-drawn range — but box drawing has no diamond and no circle at all,
+so the glyph set can only ever solve a third of the problem. Half-differentiated
+shapes would be worse than none.
+
+**Rule extracted:** when a constraint looks like it rules a feature out, check
+whether it actually binds. And prefer a representation that cannot express the
+bug over a check that catches it.

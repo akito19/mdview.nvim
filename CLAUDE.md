@@ -29,6 +29,7 @@ Manual check: `nvim -u tests/minit.lua README.md`, then `:MdView`.
 | `lua/mdview/parser.lua` | tree-sitter walk → flat IR |
 | `lua/mdview/renderer.lua` | IR → `{ lines, decorations }` |
 | `lua/mdview/highlights.lua` | `Mdview*` groups, some computed by blending |
+| `lua/mdview/mermaid.lua` | mermaid subset → diagram; pure, `nil` means fall back |
 | `lua/mdview/window.lua` | scratch buffer, split, sessions, extmarks |
 
 ## Invariants
@@ -69,7 +70,13 @@ tried and are invisible in practice. See decision 2 in the log.
 
 **The preview window is always `nowrap`.** Prose is wrapped by the renderer so
 that tables and code blocks can run off the edge and scroll horizontally.
-Tables, code blocks and rules are never wrapped.
+Tables, code blocks, rules and mermaid diagrams are never wrapped.
+
+**A wrong diagram is worse than no diagram.** Every mermaid construct outside the
+supported subset is a hard bail: `mermaid.render` returns `nil` and the fence
+renders as the labelled code block it was before. Never widen the subset by
+guessing — resolve ambiguity towards the fallback. See
+[plan/mermaid.md](plan/mermaid.md).
 
 **Sessions are keyed by source buffer** with one idempotent teardown path. Every
 autocmd routes through it; the session is removed first so re-entrant callbacks

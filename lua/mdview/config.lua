@@ -25,6 +25,7 @@ M.defaults = {
     links = true,
     tables = true,
     horizontal_rules = true,
+    mermaid = true, -- draw ```mermaid flowcharts; off renders them as code
   },
   -- How every bar/bullet/border is drawn.
   --   "glyph" (default) -- real characters, from the verified-safe set only:
@@ -51,6 +52,19 @@ M.defaults = {
   code = {
     language_label = true, -- dim header line carrying the fence language
     line_numbers = false,
+  },
+  -- A ```mermaid fence is drawn as a box-and-line diagram when it falls inside
+  -- the supported subset (`flowchart`/`graph`, TB/TD/BT/LR/RL, rectangular
+  -- nodes, single-ended edges). Anything else -- a subgraph, a cycle, an
+  -- unrecognised statement -- falls back to an ordinary labelled code block.
+  -- A wrong diagram is worse than no diagram, so the fallback is deliberate
+  -- rather than best-effort.
+  mermaid = {
+    language_label = true, -- keep the dim `mermaid` header line above a diagram
+    -- Guards against a pathological fence costing a visible pause on every
+    -- `:w`. Past either limit the fence renders as a code block.
+    max_nodes = 60,
+    max_edges = 120,
   },
   tables = {
     borders = true, -- full box-drawing grid: `┌ ┬ ┐ ├ ┼ ┤ └ ┴ ┘ ─ │`. The
@@ -183,6 +197,17 @@ function M.setup(opts)
   if tw ~= nil and (tw ~= tw or tw <= 0) then
     warn("invalid `text_width` value %s (expected a positive number), ignoring it", tostring(tw))
     merged.text_width = nil
+  end
+
+  -- The mermaid limits are guards, so a zero or negative value would disable
+  -- diagrams entirely by way of a size check -- a confusing way to spell
+  -- `elements.mermaid = false`. `validate` has already rejected non-numbers.
+  for _, key in ipairs({ "max_nodes", "max_edges" }) do
+    local v = merged.mermaid[key]
+    if v ~= v or v < 1 or v ~= math.floor(v) then
+      warn("invalid `mermaid.%s` value %s (expected a positive integer), using %s", key, tostring(v), tostring(M.defaults.mermaid[key]))
+      merged.mermaid[key] = M.defaults.mermaid[key]
+    end
   end
 
   -- The renderer indexes `bullets` by depth and falls back to "-" on a miss, so

@@ -29,6 +29,7 @@ lua/mdview/
   highlights.lua         Mdview* groups, including ones computed by blending
   parser.lua             tree-sitter walk -> flat IR
   renderer.lua           IR -> { lines, decorations }   PURE: no API access
+  mermaid.lua            mermaid subset -> { lines, decorations }   PURE
   window.lua             scratch buffer, split, session lifecycle, extmarks
 ```
 
@@ -106,6 +107,7 @@ glyphs of varying thickness (`▉▊▋▌▏` differ by 1/8 of a cell — about
 | Table | full box-drawing grid, bold shaded header, alignment honored |
 | Horizontal rule | a blank line with a tinted background |
 | Checkbox | ASCII `[ ]` / `[x]` — no font can be assumed to have `☐`/`☑` |
+| Mermaid flowchart | box-and-line diagram in the same glyph set; ASCII end markers |
 
 ### Glyph set
 
@@ -132,8 +134,8 @@ sideways — the preview window is **always `nowrap`** and the renderer wraps te
 itself.
 
 - Wrapped: paragraphs, list items, blockquote content, headings.
-- Never wrapped: tables, code blocks, horizontal rules. These are what the
-  horizontal scrolling exists for (`zl` / `zh`).
+- Never wrapped: tables, code blocks, horizontal rules, mermaid diagrams. These
+  are what the horizontal scrolling exists for (`zl` / `zh`).
 - Continuation lines keep a hanging indent, and blockquotes repeat their `█`
   prefix at the same depth.
 - Breaking is measured in display cells. CJK has no spaces, so a break is
@@ -171,7 +173,29 @@ These have each caused a real bug. Read before touching layout code.
 - `test_highlights.lua` — blend maths, degradation without `termguicolors`
 - `test_commands.lua` — end-to-end window/session behaviour (child Neovim)
 
+### Mermaid
+
+`mermaid.lua` parses a narrow subset of mermaid `flowchart` and draws it on a
+canvas whose every column is exactly `strdisplaywidth("─")` cells wide. That is
+the same widen-to-a-whole-number-of-`─` correction the table grid needs, promoted
+from an end-stage fix to the unit of layout, so alignment is structural rather
+than checked.
+
+Lines merge by bitmask: each cell accumulates four bits (up/down/left/right) and
+the glyph is chosen once at the end. The sixteen masks land on exactly the eleven
+box-drawing characters already in the safe set, so diagrams introduced **no new
+glyph**. End markers are ASCII `v ^ < > o x`.
+
+Anything outside the subset returns `nil`, and `render_code_block` falls through
+to the plain labelled code block. See [mermaid.md](mermaid.md) for the subset,
+the layout pipeline, and the decisions taken while building it.
+
 ## Out of Scope
 
 Scroll sync, live `TextChanged` rendering, `gx` link opening, footnotes, and
 rendered HTML blocks (shown as raw text).
+
+For mermaid specifically: `subgraph` containers, cycles, node shape
+differentiation, crossing minimisation, `classDef` colours, double-ended arrows,
+entity-code decoding, multi-row edge labels, and every diagram type other than
+`flowchart`.
