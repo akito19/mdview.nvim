@@ -29,7 +29,10 @@ Manual check: `nvim -u tests/minit.lua README.md`, then `:MdView`.
 | `lua/mdview/parser.lua` | tree-sitter walk → flat IR |
 | `lua/mdview/renderer.lua` | IR → `{ lines, decorations }` |
 | `lua/mdview/highlights.lua` | `Mdview*` groups, some computed by blending |
-| `lua/mdview/mermaid.lua` | mermaid subset → diagram; pure, `nil` means fall back |
+| `lua/mdview/mermaid/init.lua` | keyword → diagram-type dispatch; pure, `nil` means fall back |
+| `lua/mdview/mermaid/text.lua` | shared: trim, unquote, labels, the frontmatter/comment prelude |
+| `lua/mdview/mermaid/canvas.lua` | shared: the `─`-wide column grid, bitmask glyphs, emit |
+| `lua/mdview/mermaid/flowchart.lua` | the `flowchart` / `graph` subset: parse, layer, lay out, draw |
 | `lua/mdview/window.lua` | scratch buffer, split, sessions, extmarks |
 
 ## Invariants

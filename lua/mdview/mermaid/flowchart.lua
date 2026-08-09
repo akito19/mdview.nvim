@@ -1,17 +1,19 @@
---- Mermaid `flowchart` source -> a small, guaranteed-acyclic graph IR.
+--- The mermaid `flowchart` / `graph` subset: source -> a guaranteed-acyclic
+--- graph IR, and that IR -> a drawn canvas.
 ---
---- Stage 1 of mermaid support: parsing only. `plan/mermaid.md` defines the
---- supported subset; everything outside it is a *hard bail* -- `nil, reason` --
---- so the caller can fall back to rendering the fence as a plain code block.
---- A wrong diagram is worse than no diagram, so every ambiguity resolves
---- towards bailing.
+--- `plan/mermaid.md` defines the supported subset; everything outside it is a
+--- *hard bail* -- `nil, reason` -- so the caller can fall back to rendering the
+--- fence as a plain code block. A wrong diagram is worse than no diagram, so
+--- every ambiguity resolves towards bailing.
 ---
---- The module is pure in the same sense `renderer.lua` is: plain Lua string
---- handling, no buffer, window or API access. Nothing here measures text, so
---- unlike the renderer it has no `ambiwidth` dependency either.
+--- `M.parse` takes the lines of the shared prelude (see `text.lines_of`), not
+--- the raw fence body: frontmatter, comments and blanks are already gone, and
+--- turning what is left into statements -- splitting on `;` -- is this diagram
+--- type's own business.
 ---
 --- On success:
----   { dir    = "TB" | "BT" | "LR" | "RL",
+---   { kind   = "flowchart",
+---     dir    = "TB" | "BT" | "LR" | "RL",
 ---     nodes  = { { id = "A", label = { "line", ... } }, ... },  -- source order
 ---     index  = { A = 1, ... },                                  -- id -> nodes[i]
 ---     edges  = { { from = 1, to = 2, marker = ..., style = ..., label = ... } } }
@@ -19,6 +21,18 @@
 --- On failure: `nil, reason` where reason is one of "not_flowchart",
 --- "subgraph", "cycle", "bad_id", "unsupported_node", "unsupported_edge",
 --- "unparsed", "too_big".
+local text = require("mdview.mermaid.text")
+local canvas = require("mdview.mermaid.canvas")
+
+local trim, skip_ws, unquote, split_label =
+  text.trim, text.skip_ws, text.unquote, text.split_label
+
+local BIT_U, BIT_D, BIT_L, BIT_R = canvas.BIT_U, canvas.BIT_D, canvas.BIT_L, canvas.BIT_R
+local EDGE_GROUP, GROUP_EDGE_LABEL = canvas.EDGE_GROUP, canvas.GROUP_EDGE_LABEL
+local MARKER_CHAR = canvas.MARKER_CHAR
+local cv_bits, cv_span, text_cols = canvas.bits, canvas.span, canvas.text_cols
+local draw_box, draw_path = canvas.draw_box, canvas.draw_path
+
 local M = {}
 
 local DEFAULTS = { max_nodes = 60, max_edges = 120 }
@@ -59,69 +73,8 @@ local SHAPES = {
 }
 
 ---------------------------------------------------------------------------
--- String helpers
----------------------------------------------------------------------------
-
-local function trim(s)
-  return (s:gsub("^%s+", ""):gsub("%s+$", ""))
-end
-
-local function skip_ws(s, pos)
-  return (s:match("^%s*()", pos))
-end
-
---- Strip one layer of surrounding double quotes, if present.
-local function unquote(s)
-  local inner = s:match('^%s*"(.*)"%s*$')
-  return inner or s
-end
-
---- Split a label on `<br>` / `<br/>` / `<br />`, any case. Always returns at
---- least one string, so a label is a non-empty list everywhere downstream.
-local function split_label(text)
-  local out = {}
-  local pos = 1
-  while true do
-    local s, e = text:find("<%s*[Bb][Rr]%s*/?%s*>", pos)
-    if not s then
-      break
-    end
-    out[#out + 1] = trim(text:sub(pos, s - 1))
-    pos = e + 1
-  end
-  out[#out + 1] = trim(text:sub(pos))
-  return out
-end
-
----------------------------------------------------------------------------
 -- Line -> statement splitting
 ---------------------------------------------------------------------------
-
---- Drop YAML frontmatter, which is allowed only at the very top with the
---- opening `---` alone on its line. Returns the remaining lines, or
---- `nil, reason` if the block is never closed.
-local function strip_frontmatter(lines)
-  local first
-  for i, line in ipairs(lines) do
-    if trim(line) ~= "" then
-      first = i
-      break
-    end
-  end
-  if not first or trim(lines[first]) ~= "---" then
-    return lines
-  end
-  for i = first + 1, #lines do
-    if trim(lines[i]) == "---" then
-      local rest = {}
-      for j = i + 1, #lines do
-        rest[#rest + 1] = lines[j]
-      end
-      return rest
-    end
-  end
-  return nil, "unparsed"
-end
 
 --- Split one line into statements on `;`.
 ---
@@ -154,17 +107,12 @@ local function split_line(line, out)
   out[#out + 1] = line:sub(start)
 end
 
---- Lines -> trimmed, non-empty statements. Comments and directives are dropped
---- here: `%%` opens a comment only as the first non-whitespace on a line (the
---- docs are explicit that a comment owns its line), so a label containing `%%`
---- survives. `%%{init: ...}%%` directives are comments by that same rule.
+--- Prelude lines -> trimmed, non-empty statements. `;` separates statements in
+--- a flowchart, so one line may carry several.
 local function statements(lines)
   local out = {}
   for _, line in ipairs(lines) do
-    local body = trim(line)
-    if body ~= "" and body:sub(1, 2) ~= "%%" then
-      split_line(line, out)
-    end
+    split_line(line, out)
   end
   local stmts = {}
   for _, s in ipairs(out) do
@@ -240,11 +188,11 @@ local function parse_node(s, pos)
       if body == nil then
         return nil, np
       end
-      local text = trim(body)
-      if text:sub(1, 1) == "`" and text:sub(-1) == "`" then
+      local body_text = trim(body)
+      if body_text:sub(1, 1) == "`" and body_text:sub(-1) == "`" then
         return nil, "unsupported_node" -- markdown-string label
       end
-      label = split_label(text)
+      label = split_label(body_text)
       pos = np
       break
     end
@@ -426,6 +374,11 @@ end
 
 --- `flowchart <DIR>` / `graph <DIR>`, both keyword and direction matched
 --- case-insensitively. Returns the normalised direction or nil.
+---
+--- The keyword itself has already selected this module (`init.lua` dispatches on
+--- it), but the direction has not been looked at: `flowchart XY` is
+--- `not_flowchart`, and that judgement belongs to the diagram type that owns the
+--- direction vocabulary.
 local function parse_header(s)
   local keyword, rest = s:match("^(%a+)%s*(.*)$")
   if not keyword then
@@ -535,11 +488,11 @@ local function has_cycle(graph)
 end
 
 ---------------------------------------------------------------------------
--- Entry point
+-- Parse entry point
 ---------------------------------------------------------------------------
 
---- Parse the body of a ```` ```mermaid ```` fence.
----@param lines string[] fence body, without the fence markers
+--- Parse a flowchart.
+---@param lines string[] prelude lines, from `text.lines_of`
 ---@param opts table|nil { max_nodes = 60, max_edges = 120 }
 ---@return table|nil graph, string|nil reason
 function M.parse(lines, opts)
@@ -547,18 +500,13 @@ function M.parse(lines, opts)
   local max_nodes = opts.max_nodes or DEFAULTS.max_nodes
   local max_edges = opts.max_edges or DEFAULTS.max_edges
 
-  local body, reason = strip_frontmatter(lines)
-  if not body then
-    return nil, reason
-  end
-
-  local stmts = statements(body)
+  local stmts = statements(lines)
   local dir = stmts[1] and parse_header(stmts[1])
   if not dir then
     return nil, "not_flowchart"
   end
 
-  local graph = { dir = dir, nodes = {}, index = {}, edges = {} }
+  local graph = { kind = "flowchart", dir = dir, nodes = {}, index = {}, edges = {} }
   for i = 2, #stmts do
     local s = stmts[i]
     local word = s:match("^(%a[%w_]*)")
@@ -586,189 +534,11 @@ function M.parse(lines, opts)
 end
 
 ---------------------------------------------------------------------------
--- Canvas
+-- Layering
 ---------------------------------------------------------------------------
-
-local displaywidth = vim.fn.strdisplaywidth
-
--- Which directions a line leaves a cell. The glyph is chosen once, at emit
--- time, from the accumulated mask -- so crossings, T-junctions and the joins
--- where an edge meets a box border all fall out of OR-ing bits together
--- instead of being special-cased per shape.
-local BIT_U, BIT_D, BIT_L, BIT_R = 1, 2, 4, 8
-
--- All sixteen masks land on the eleven box-drawing characters already in the
--- plugin's verified-safe set. Nothing here may grow that set.
-local GLYPH = {
-  [BIT_U + BIT_D] = "│",
-  [BIT_L + BIT_R] = "─",
-  [BIT_D + BIT_R] = "┌",
-  [BIT_D + BIT_L] = "┐",
-  [BIT_U + BIT_R] = "└",
-  [BIT_U + BIT_L] = "┘",
-  [BIT_U + BIT_D + BIT_R] = "├",
-  [BIT_U + BIT_D + BIT_L] = "┤",
-  [BIT_D + BIT_L + BIT_R] = "┬",
-  [BIT_U + BIT_L + BIT_R] = "┴",
-  [BIT_U + BIT_D + BIT_L + BIT_R] = "┼",
-  -- A one-directional stub still has to draw as a line.
-  [BIT_U] = "│",
-  [BIT_D] = "│",
-  [BIT_L] = "─",
-  [BIT_R] = "─",
-}
-
-local GROUP_BOX = "MdviewMermaidBox"
-local GROUP_LABEL = "MdviewMermaidLabel"
-local GROUP_EDGE_LABEL = "MdviewMermaidEdgeLabel"
-local EDGE_GROUP = {
-  solid = "MdviewMermaidEdge",
-  dotted = "MdviewMermaidEdgeDim",
-  thick = "MdviewMermaidEdgeStrong",
-}
 
 local GAP = 2 -- columns between sibling boxes when layers run down the screen
 local VGAP = 1 -- rows between sibling boxes when layers run across the screen
-
---- LuaJIT has no `|` operator, and this module stays plain Lua rather than
---- reaching for `require("bit")`. The four flags are distinct powers of two, so
---- OR is "add it unless it is already there".
-local function set_bit(mask, bit)
-  if mask % (bit + bit) >= bit then
-    return mask
-  end
-  return mask + bit
-end
-
---- A grid whose every column is exactly `rule_w` display cells wide.
----
---- That is the whole answer to 'ambiwidth'. Box drawing is East Asian
---- Ambiguous, so `─ │ ┌ ┐ …` are one cell normally and two under
---- `ambiwidth = "double"`, while ASCII stays one either way. Measuring the
---- layout in units of `strdisplaywidth("─")` -- rather than correcting for the
---- discrepancy afterwards, as `render_table` has to -- makes alignment
---- structural: a glyph fills exactly one column by definition, and text is
---- padded out to a whole number of them.
-local function new_canvas(rule_w)
-  return { rule_w = rule_w, mask = {}, group = {}, spans = {}, rows = 0, cols = 0 }
-end
-
-local function cv_touch(cv, row, col)
-  if row + 1 > cv.rows then
-    cv.rows = row + 1
-  end
-  if col + 1 > cv.cols then
-    cv.cols = col + 1
-  end
-end
-
---- Add one connection bit to a cell. The first writer of a cell owns its
---- highlight group, so an edge meeting a box border is coloured as border.
-local function cv_bits(cv, row, col, bits, group)
-  local m = cv.mask[row]
-  if not m then
-    m = {}
-    cv.mask[row] = m
-    cv.group[row] = {}
-  end
-  local cur = m[col] or 0
-  for _, bit in ipairs(bits) do
-    cur = set_bit(cur, bit)
-  end
-  m[col] = cur
-  if group and not cv.group[row][col] then
-    cv.group[row][col] = group
-  end
-  cv_touch(cv, row, col)
-end
-
---- Place text starting at `col`, occupying `cols` canvas columns.
-local function cv_span(cv, row, col, text, cols, group)
-  local s = cv.spans[row]
-  if not s then
-    s = {}
-    cv.spans[row] = s
-  end
-  s[col] = { text = text, cols = cols, group = group }
-  cv_touch(cv, row, col + cols - 1)
-end
-
---- Canvas columns needed to hold `text`.
-local function text_cols(text, rule_w)
-  return math.ceil(displaywidth(text) / rule_w)
-end
-
---- Walk the grid into lines plus `hl` decorations. Byte columns are recorded
---- while the string is being built, never recomputed from display columns.
-local function cv_emit(cv, prefix, lines, decs)
-  local rule_w = cv.rule_w
-  local blank = string.rep(" ", rule_w)
-  for row = 0, cv.rows - 1 do
-    local line = #lines -- 0-based index of the line about to be appended
-    local parts, bytes = { prefix }, #prefix
-    local run_group, run_start
-
-    local function close_run()
-      if run_group then
-        decs[#decs + 1] = {
-          kind = "hl",
-          line = line,
-          col_start = run_start,
-          col_end = bytes,
-          group = run_group,
-          priority = 100,
-        }
-        run_group, run_start = nil, nil
-      end
-    end
-
-    local function put(text, group)
-      if group ~= run_group then
-        close_run()
-        if group then
-          run_group, run_start = group, bytes
-        end
-      end
-      parts[#parts + 1] = text
-      bytes = bytes + #text
-    end
-
-    local col = 0
-    while col < cv.cols do
-      local span = cv.spans[row] and cv.spans[row][col]
-      if span then
-        put(span.text, span.group)
-        -- Padding sits outside the highlight, so a label's background does not
-        -- run past the text it belongs to.
-        local pad = span.cols * rule_w - displaywidth(span.text)
-        if pad > 0 then
-          put(string.rep(" ", pad), nil)
-        end
-        col = col + span.cols
-      else
-        local m = cv.mask[row] and cv.mask[row][col]
-        local glyph = m and GLYPH[m]
-        if glyph then
-          put(glyph, cv.group[row][col])
-        else
-          put(blank, nil)
-        end
-        col = col + 1
-      end
-    end
-    close_run()
-    -- Deliberately NOT right-trimmed. Every row is padded to the full canvas
-    -- width, which makes "all rows are the same display width" an exact
-    -- property of the output rather than something a test has to reconstruct --
-    -- and that property is the one the whole column model exists to guarantee.
-    -- The trailing spaces are invisible and carry no decoration.
-    lines[#lines + 1] = table.concat(parts)
-  end
-end
-
----------------------------------------------------------------------------
--- Layering
----------------------------------------------------------------------------
 
 --- Longest-path layering. `M.parse` guarantees acyclicity, so a Kahn sweep
 --- reaches every node and no cycle guard is needed here.
@@ -855,8 +625,8 @@ local function size_items(layers, nlayers, rule_w)
         it.w, it.h = 1, 1
       else
         local cols = 1
-        for _, text in ipairs(it.label) do
-          cols = math.max(cols, text_cols(text, rule_w))
+        for _, line in ipairs(it.label) do
+          cols = math.max(cols, text_cols(line, rule_w))
         end
         it.label_cols = cols
         it.w = cols + 4 -- border + pad + label + pad + border
@@ -889,6 +659,9 @@ end
 --- coordinate that is one segment's source and another's target, which can
 --- happen when a box in the layer above and one in the layer below share a port
 --- column -- would draw a junction where there is no connection.
+---
+--- Channel routing is the whole of what a flowchart layout does and no other
+--- diagram type has, so this stays here rather than in `canvas.lua`.
 ---@param ports table|nil { src = , dst = } coordinates of this segment's ports
 local function greedy_slot(rows, span, ports)
   local r = 0
@@ -927,54 +700,6 @@ local function slot_count(rows)
   end
   return n
 end
-
---- Draw one node box, label included.
-local function draw_box(cv, it)
-  local x, y, w, h = it.x, it.y, it.w, it.h
-  local right = x + w - 1
-  local bottom = y + h - 1
-  cv_bits(cv, y, x, { BIT_D, BIT_R }, GROUP_BOX)
-  cv_bits(cv, y, right, { BIT_D, BIT_L }, GROUP_BOX)
-  cv_bits(cv, bottom, x, { BIT_U, BIT_R }, GROUP_BOX)
-  cv_bits(cv, bottom, right, { BIT_U, BIT_L }, GROUP_BOX)
-  for c = x + 1, right - 1 do
-    cv_bits(cv, y, c, { BIT_L, BIT_R }, GROUP_BOX)
-    cv_bits(cv, bottom, c, { BIT_L, BIT_R }, GROUP_BOX)
-  end
-  for r = y + 1, bottom - 1 do
-    cv_bits(cv, r, x, { BIT_U, BIT_D }, GROUP_BOX)
-    cv_bits(cv, r, right, { BIT_U, BIT_D }, GROUP_BOX)
-    -- One column of padding inside each border, unless the box has been
-    -- widened to match its layer (horizontal layouts do that), in which case
-    -- the label is re-centred in the extra room.
-    cv_span(cv, r, x + (it.label_off or 2), it.label[r - y] or "", it.label_cols, GROUP_LABEL)
-  end
-end
-
---- Apply connection bits along a path of adjacent cells. Corners, crossings
---- and T-junctions need no special case: each step tells both of its cells
---- which way the line leaves them.
-local function draw_path(cv, path, group)
-  for i = 1, #path - 1 do
-    local a, b = path[i], path[i + 1]
-    if a.col == b.col then
-      local down = b.row > a.row
-      cv_bits(cv, a.row, a.col, { down and BIT_D or BIT_U }, group)
-      cv_bits(cv, b.row, b.col, { down and BIT_U or BIT_D }, group)
-    else
-      local right = b.col > a.col
-      cv_bits(cv, a.row, a.col, { right and BIT_R or BIT_L }, group)
-      cv_bits(cv, b.row, b.col, { right and BIT_L or BIT_R }, group)
-    end
-  end
-end
-
-local MARKER_CHAR = {
-  down = { arrow = "v", circle = "o", cross = "x" },
-  up = { arrow = "^", circle = "o", cross = "x" },
-  right = { arrow = ">", circle = "o", cross = "x" },
-  left = { arrow = "<", circle = "o", cross = "x" },
-}
 
 --- Group the segments by the channel they cross. `seg.layer` is always the
 --- lower of the two layer indices, which is what makes this work for BT too:
@@ -1492,10 +1217,10 @@ local function layout_horizontal(layers, nlayers, segments, flip, cv, rule_w)
 end
 
 ---------------------------------------------------------------------------
--- Entry points
+-- Draw entry point
 ---------------------------------------------------------------------------
 
---- Lay out and draw a parsed graph.
+--- Lay out and draw a parsed flowchart.
 ---
 --- Diagrams join tables, code blocks and rules in the never-wrapped set: they
 --- are sized by their content and scroll sideways, so no target width is
@@ -1506,16 +1231,13 @@ end
 function M.draw(graph, opts)
   opts = opts or {}
   local prefix = opts.prefix or ""
-  -- Re-measured per call rather than memoised at module level: 'ambiwidth' can
-  -- change between two renders in one session, and this single number is what
-  -- the whole layout is denominated in.
-  local rule_w = math.max(1, displaywidth("─"))
+  local rule_w = canvas.rule_width()
 
   local layer = assign_layers(graph)
   local layers, nlayers, segments = build_items(graph, layer)
   size_items(layers, nlayers, rule_w)
 
-  local cv = new_canvas(rule_w)
+  local cv = canvas.new_canvas(rule_w)
   local vertical = graph.dir == "TB" or graph.dir == "BT"
   local flip = graph.dir == "BT" or graph.dir == "RL"
   if vertical then
@@ -1525,27 +1247,8 @@ function M.draw(graph, opts)
   end
 
   local lines, decorations = {}, {}
-  cv_emit(cv, prefix, lines, decorations)
+  canvas.emit(cv, prefix, lines, decorations)
   return { lines = lines, decorations = decorations }
-end
-
---- Parse and draw, or `nil` if the fence is outside the supported subset.
----@param lines string[] fence body
----@param opts table|nil
----@return table|nil { lines, decorations }
-function M.render(lines, opts)
-  opts = opts or {}
-  -- `marker_style = "block"` exists for terminals that do not draw box drawing
-  -- natively, and a diagram is nothing but box drawing. It degrades to the
-  -- plain code block, the same way `tables.borders = false` drops the grid.
-  if opts.marker_style == "block" then
-    return nil
-  end
-  local graph = M.parse(lines, opts)
-  if not graph then
-    return nil
-  end
-  return M.draw(graph, opts)
 end
 
 return M
