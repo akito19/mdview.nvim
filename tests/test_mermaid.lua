@@ -568,6 +568,13 @@ local LABEL = "flowchart TD\nA[Check] -->|ok| B[Done]"
 local MULTILINE = "flowchart TD\nA[one<br/>two] --> B[x]"
 local MARKERS = "flowchart TD\nA --o B\nA --x C\nA --- D"
 local LR = "flowchart LR\nA[Parse] --> B[Layout] --> C[Draw]"
+-- LR mirrors of LABEL, FANOUT and LONG. The horizontal layout is a separate
+-- code path from the vertical one -- its own channel planner, its own segment
+-- drawing -- so the vertical goldens above cover none of it beyond the straight
+-- chain `LR` already pins.
+local LR_LABEL = "flowchart LR\nA[Check] -->|ok| B[Done]"
+local LR_FANOUT = "flowchart LR\nA[Root] --> B[Left]\nA --> C[Right]"
+local LR_LONG = "flowchart LR\nA --> B\nB --> C\nA --> C"
 
 T["layout"]["a chain runs straight down"] = function()
   -- Ports, not boxes, are what get aligned: `Parse` is 9 columns wide and
@@ -710,6 +717,56 @@ T["layout"]["RL is LR reversed"] = function()
   })
 end
 
+T["layout"]["an LR edge label sits on its horizontal run"] = function()
+  -- The horizontal counterpart of LABEL. Vertically a label goes *beside* the
+  -- line, because a run of `│` has no room for text; horizontally it goes *on*
+  -- it. The channel is sized to hold it: one column per label slot plus a
+  -- separating column plus the marker, so `ok` widens the gap from the three
+  -- columns of `LR` above to four.
+  eq(rows(LR_LABEL), {
+    "┌───────┐    ┌──────┐",
+    "│ Check ├ok─>┤ Done │",
+    "└───────┘    └──────┘",
+  })
+end
+
+T["layout"]["an LR fan-out jogs in the channel"] = function()
+  -- The horizontal counterpart of FANOUT, and the only golden that exercises
+  -- the `seg.cy ~= seg.ty` path: both targets sit off Root's port row, so each
+  -- connector turns in the channel instead of running straight across.
+  --
+  -- The two branches share the jog column rather than taking one each -- they
+  -- meet at Root's port, which is what the `┤` on Root's row is. Both boxes in
+  -- the second layer are `Right`-wide even though `Left` is shorter: uniform
+  -- widths in a layer are what keep the left ports aligned.
+  eq(rows(LR_FANOUT), {
+    "           ┌───────┐",
+    "        ┌─>┤ Left  │",
+    "┌──────┐│  └───────┘",
+    "│ Root ├┤",
+    "└──────┘│  ┌───────┐",
+    "        └─>┤ Right │",
+    "           └───────┘",
+  })
+end
+
+T["layout"]["an LR edge spanning two layers routes past the layer between"] = function()
+  -- The horizontal counterpart of LONG, and the only golden that draws a
+  -- horizontal dummy: A --> C skips B's layer, so it gets a dummy there and
+  -- runs along the row below B as `───` rather than crossing B's box.
+  --
+  -- The vertical it climbs into C is shared with B --> C: the two segments may
+  -- touch because C is a target for both, so the merge draws a connection that
+  -- really exists.
+  eq(rows(LR_LONG), {
+    "        ┌───┐",
+    "┌───┐┌─>┤ B ├┐",
+    "│ A ├┤  └───┘│  ┌───┐",
+    "└───┘│       ├─>┤ C │",
+    "     └───────┘  └───┘",
+  })
+end
+
 T["layout"]["an empty label line does not break box sizing"] = function()
   -- `A[a<br/>]` parses to { "a", "" }, so a box has to tolerate a blank row.
   eq(rows("flowchart TD\nA[a<br/>] --> B[b]"), {
@@ -752,7 +809,15 @@ T["layout"]["equal width"]["every row of a diagram is the same width"] = functio
   --
   -- Measured with `strwidth`: `strdisplaywidth` is not additive over a long run
   -- of `─` and reports misalignment that is not there.
-  for _, src in ipairs({ CHAIN, FANOUT, DIAMOND, LONG, LABEL, MULTILINE, MARKERS, LR }) do
+  --
+  -- The horizontal sources earn their place here separately: an LR row is
+  -- padded to a width that comes out of the channel planner rather than out of
+  -- a box, and with a label in it that width is a label span rounded up to
+  -- whole `─` columns -- the one number in the layout that is not obvious by
+  -- inspection under "double".
+  for _, src in
+    ipairs({ CHAIN, FANOUT, DIAMOND, LONG, LABEL, MULTILINE, MARKERS, LR, LR_LABEL, LR_FANOUT, LR_LONG })
+  do
     local lines = draw(src).lines
     local widths = {}
     for _, line in ipairs(lines) do
@@ -781,7 +846,9 @@ T["layout"]["equal width"]["only verified-safe glyphs are drawn"] = function(amb
     ["┘"] = true,
   }
   local found = {}
-  for _, src in ipairs({ CHAIN, FANOUT, DIAMOND, LONG, LABEL, MULTILINE, MARKERS, LR }) do
+  for _, src in
+    ipairs({ CHAIN, FANOUT, DIAMOND, LONG, LABEL, MULTILINE, MARKERS, LR, LR_LABEL, LR_FANOUT, LR_LONG })
+  do
     for _, line in ipairs(draw(src).lines) do
       for _, char in ipairs(vim.fn.split(line, "\\zs")) do
         if #char > 1 and not SAFE[char] then
