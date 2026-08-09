@@ -373,6 +373,7 @@ Calling `setup()` is optional; the plugin works with the defaults below: >lua
       tables = {
         borders = true,          -- full box-drawing grid; false = `│` only
         zebra = false,           -- redundant once every row is ruled
+        max_columns = 32,        -- wider than this renders as plain text
       },
       highlights = {
         blend = true,            -- compute background groups from Normal.bg
@@ -400,6 +401,16 @@ bar -- a zero-width marker would be invisible. Lists nested deeper than
 `│` alone (the v4 look); `tables.zebra = true` brings the alternating row tint
 back on top of either.
 
+`tables.max_columns` is a guard, like the mermaid limits. The grid costs one
+padded cell, junction and rule segment per intersection, and the column count
+comes from the WIDEST row -- so a single 800-cell row makes every other row 800
+columns wide too, and a few kilobytes of markdown can cost hundreds of
+megabytes on every |:w|. A table with more columns renders as plain text
+instead, exactly as `elements.tables = false` does. The default 32 is far past
+anything readable: at one cell per column a 32-column grid is already about 130
+cells wide. It must be a positive integer; anything else warns and keeps the
+default.
+
 `elements.mermaid = false` leaves a ```mermaid fence as an ordinary code block.
 `mermaid.language_label = false` drops the dim header line above a drawn
 diagram. `mermaid.max_nodes` and `mermaid.max_edges` are guards: past either
@@ -423,8 +434,8 @@ VALIDATION                                            *mdview-config-validation*
   of silently doing nothing;
 - a value of the wrong type warns and the default is kept;
 - a `split`, `marker_style`, `width`, `height`, `text_width`,
-  `mermaid.max_nodes` or `mermaid.max_edges` that is the right type but out of
-  range warns and falls back to its default.
+  `mermaid.max_nodes`, `mermaid.max_edges` or `tables.max_columns` that is the
+  right type but out of range warns and falls back to its default.
 
 List-valued options -- currently only `icons.bullets` -- REPLACE the default
 instead of merging into it, because |vim.tbl_deep_extend()| merges lists

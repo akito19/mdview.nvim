@@ -256,6 +256,7 @@ require("mdview").setup({
   tables = {
     borders = true,          -- full box-drawing grid; false = `│` columns only
     zebra = false,           -- redundant once every row is ruled
+    max_columns = 32,        -- wider than this renders as plain text (a guard)
   },
   highlights = {
     blend = true,            -- compute background groups from Normal.bg
@@ -279,6 +280,15 @@ never runs off the edge.
 `tables.borders = false` drops the horizontal rules and separates columns with
 `│` alone (the v4 look); `tables.zebra = true` brings the alternating row tint
 back on top of either.
+
+`tables.max_columns` is a guard, like the mermaid limits. The grid costs one
+padded cell, junction and rule segment per intersection, and the column count
+comes from the *widest* row — so a single 800-cell row makes every other row 800
+columns wide too, and a few kilobytes of markdown can cost hundreds of
+megabytes on every `:w`. A table with more columns than this renders as plain
+text instead. The default of 32 is far past anything readable: at one cell per
+column a 32-column grid is already about 130 cells wide. It must be a positive
+integer; anything else warns and keeps the default.
 
 `heading.underline_levels = 0` disables the H1/H2 band entirely; a value of 6
 gives every level one. A heading level deeper than `heading.gutter` still gets
