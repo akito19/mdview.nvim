@@ -957,6 +957,34 @@ T["mermaid"]["an unsupported fence renders exactly like any other code block"] =
   eq(#drawn.decorations, #plain.decorations)
 end
 
+T["mermaid"]["a fence that parses but draws nothing keeps its source"] = function()
+  -- A header with no statements under it, or with only statements the parser
+  -- recognises and skips, parses fine and lays out an empty canvas. That is the
+  -- ordinary state of a diagram being typed out: the author writes the header,
+  -- saves, and must still see what they wrote. Emitting the language label over
+  -- zero diagram lines dropped the fence body entirely.
+  for _, body in ipairs({
+    { "flowchart TD" },
+    { "flowchart TD", "  classDef warn fill:#f00" },
+    { "flowchart TD", "  style A fill:#f00" },
+    { "sequenceDiagram" },
+  }) do
+    local drawn = render({ { type = "code_block", lang = "mermaid", lines = body } }, nil, { width = 60 })
+    local plain = render({ { type = "code_block", lang = "text", lines = body } }, nil, { width = 60 })
+    -- Line 1 is the language label, which differs by tag; everything after it
+    -- must match the plain code block byte for byte.
+    eq({ body[1], #drawn.lines }, { body[1], #plain.lines })
+    for i = 2, #plain.lines do
+      eq({ body[1], drawn.lines[i] }, { body[1], plain.lines[i] })
+    end
+    eq({ body[1], #drawn.decorations }, { body[1], #plain.decorations })
+    -- And the source really is there, not merely the same length as something.
+    for i, src in ipairs(body) do
+      eq({ body[1], drawn.lines[i + 1] }, { body[1], "  " .. src })
+    end
+  end
+end
+
 T["mermaid"]["elements.mermaid = false keeps the fence as source"] = function()
   local cfg = cfg_copy()
   cfg.elements.mermaid = false

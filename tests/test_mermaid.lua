@@ -864,6 +864,24 @@ T["fallback"]["render returns nil for anything the parser bails on"] = function(
   end
 end
 
+T["fallback"]["render returns nil when a valid parse draws nothing"] = function()
+  -- These are not bails: the parse succeeds, with zero nodes. `classDef` and
+  -- `style` are recognised-and-skipped statements, so a header plus one of them
+  -- is a well-formed flowchart with nothing in it -- exactly what a diagram
+  -- looks like halfway through being typed. An empty canvas is still no
+  -- diagram, so `render` must offer the caller the same `nil` a bail does,
+  -- rather than a truthy result with no lines in it.
+  for _, src in ipairs({
+    "flowchart TD",
+    "flowchart TD\n  classDef warn fill:#f00",
+    "flowchart TD\n  style A fill:#f00",
+  }) do
+    local lines = vim.split(src, "\n", { plain = true })
+    eq({ src, mermaid.parse(lines) ~= nil }, { src, true })
+    eq({ src, mermaid.render(lines) }, { src, nil })
+  end
+end
+
 T["fallback"]["the block marker style has no box drawing to fall back on"] = function()
   -- `marker_style = "block"` exists for terminals that do not draw
   -- U+2500..U+257F themselves, and a diagram is nothing but those characters.

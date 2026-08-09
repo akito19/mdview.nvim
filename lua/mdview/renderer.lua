@@ -564,7 +564,12 @@ function M.render(blocks, config, opts)
         max_nodes = mermaid_cfg.max_nodes,
         max_edges = mermaid_cfg.max_edges,
       })
-      if diagram then
+      -- `#lines > 0` is belt and braces over `mermaid.draw`, which already
+      -- returns nil for an empty canvas. An empty-but-truthy result here would
+      -- emit the language label and then loop over nothing, swallowing the
+      -- fence body -- so the branch is guarded at the point that would lose it,
+      -- not only at the point that produces it.
+      if diagram and #diagram.lines > 0 then
         if mermaid_cfg.language_label ~= false then
           local l = add_line(base .. "  " .. b.lang)
           quote_bar_hl(l, b)
