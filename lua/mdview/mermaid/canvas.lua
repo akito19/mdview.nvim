@@ -54,11 +54,18 @@ M.GROUP_LABEL = GROUP_LABEL
 M.GROUP_EDGE_LABEL = GROUP_EDGE_LABEL
 M.EDGE_GROUP = EDGE_GROUP
 
+-- All ASCII, so nothing here is at the mercy of a font: the character IS the
+-- marker. `none` is deliberately absent -- a missing entry means "draw no
+-- marker", which is what an open link (`---`, `->`) wants.
+--
+-- `async` is the sequence diagram's `-)`: an open arrowhead, kept as its own
+-- character rather than collapsed onto `>` because mermaid draws the
+-- distinction and `( )` cost nothing to add.
 M.MARKER_CHAR = {
   down = { arrow = "v", circle = "o", cross = "x" },
   up = { arrow = "^", circle = "o", cross = "x" },
-  right = { arrow = ">", circle = "o", cross = "x" },
-  left = { arrow = "<", circle = "o", cross = "x" },
+  right = { arrow = ">", circle = "o", cross = "x", async = ")" },
+  left = { arrow = "<", circle = "o", cross = "x", async = "(" },
 }
 
 --- The width of one canvas column in display cells.
@@ -163,6 +170,12 @@ function M.emit(cv, prefix, lines, decs)
     end
 
     local function put(text, group)
+      -- An empty span -- the blank interior row of a box padded to its
+      -- neighbour's height, or a `A[a<br/>]` label line -- must not open and
+      -- immediately close a run, which would emit a zero-width decoration.
+      if #text == 0 then
+        return
+      end
       if group ~= run_group then
         close_run()
         if group then
