@@ -215,11 +215,21 @@ local function parse_node(s, pos)
   return { id = id, label = label }, pos
 end
 
+--- The largest `&` group worth building. A group a connector follows makes at
+--- least `#members` edges (the smallest partner has one member); a lone group
+--- makes at most `max_nodes` distinct nodes. The sum bounds both, so nothing
+--- that would have parsed is lost -- except a lone group padded past the sum
+--- with repeated ids, which draws nothing extra and bails the safe way.
+local function group_cap(limits)
+  return limits.max_nodes + limits.max_edges
+end
+
 --- Parse a `&`-separated group of node references, registering each in the
 --- graph as it is seen (so `nodes` ends up in first-appearance order).
 --- Returns `{ index, ... }, pos` or `nil, reason`.
-local function parse_group(s, pos, graph)
+local function parse_group(s, pos, graph, limits)
   local members = {}
+  local cap = group_cap(limits)
   while true do
     local node, np = parse_node(s, pos)
     if not node then
@@ -236,6 +246,9 @@ local function parse_group(s, pos, graph)
       graph.index[node.id] = i
     end
     members[#members + 1] = i
+    if #members > cap then
+      return nil, "too_big"
+    end
     pos = skip_ws(s, np)
     if s:sub(pos, pos) ~= "&" then
       return members, pos
@@ -264,11 +277,21 @@ end
 
 --- Scan forward for the closing half of a labelled link (`-- text -->`).
 --- Returns `label, marker, pos` or nil.
+---
+--- Every closer below opens with a `+`-quantified run of one character (`-`,
+--- `=` or `.`), so a closer matching at `i` when `s[i-1]` is that same character
+--- also matches -- one character longer -- at `i - 1`, where this scan would
+--- already have returned. Mid-run offsets can therefore be skipped, and that is
+--- what keeps the scan linear: a failing `%.+%-` backtracks over the whole
+--- remaining run, so retrying it at every offset of an n-character run of dots
+--- costs O(n^2). Skipping leaves one attempt per run, and runs are disjoint.
 local function labelled(s, pos, patterns)
   for i = pos, #s do
-    local marker, after = try_close(s, i, patterns)
-    if marker then
-      return trim(s:sub(pos, i - 1)), marker, after
+    if i == pos or s:sub(i - 1, i - 1) ~= s:sub(i, i) then
+      local marker, after = try_close(s, i, patterns)
+      if marker then
+        return trim(s:sub(pos, i - 1)), marker, after
+      end
     end
   end
 end
@@ -399,8 +422,8 @@ end
 --- adjacent pair becomes the cross product of its members. Chaining, `&`
 --- fan-out and the mixed form are all that one rule, not three special cases.
 --- Returns nil on success, a reason string on failure.
-local function parse_statement(s, graph)
-  local group, pos = parse_group(s, 1, graph)
+local function parse_statement(s, graph, limits)
+  local group, pos = parse_group(s, 1, graph, limits)
   if not group then
     return pos
   end
@@ -413,7 +436,7 @@ local function parse_statement(s, graph)
     if not conn then
       return np
     end
-    local next_group, np2 = parse_group(s, np, graph)
+    local next_group, np2 = parse_group(s, np, graph, limits)
     if not next_group then
       return np2
     end
@@ -426,6 +449,13 @@ local function parse_statement(s, graph)
           style = conn.style,
           label = conn.label,
         }
+        -- The budget is enforced inside the cross product, not after the
+        -- statement: one `A & ... --> B & ...` materialises the full product
+        -- first, so a check that runs afterwards can only fire once the memory
+        -- it exists to prevent has already been allocated. O(1) per edge.
+        if #graph.edges > limits.max_edges then
+          return "too_big"
+        end
       end
     end
     group, pos = next_group, np2
@@ -499,6 +529,7 @@ function M.parse(lines, opts)
   opts = opts or {}
   local max_nodes = opts.max_nodes or DEFAULTS.max_nodes
   local max_edges = opts.max_edges or DEFAULTS.max_edges
+  local limits = { max_nodes = max_nodes, max_edges = max_edges }
 
   local stmts = statements(lines)
   local dir = stmts[1] and parse_header(stmts[1])
@@ -514,7 +545,7 @@ function M.parse(lines, opts)
       return nil, "subgraph"
     end
     if not is_skipped(s) then
-      local err = parse_statement(s, graph)
+      local err = parse_statement(s, graph, limits)
       if err then
         return nil, err
       end
