@@ -366,10 +366,13 @@ local function place_x(boxes, messages, mcols)
     for k, msg in ipairs(messages) do
       local lo = math.min(msg.from, msg.to)
       if math.max(msg.from, msg.to) == j then
-        -- Run columns needed strictly between the two lifelines: the text, plus
-        -- one for the end marker. An unlabelled message still gets one, so no
-        -- pair ever collapses to `├┤`.
-        local run = mcols[k] + 1
+        -- Run columns needed strictly between the two lifelines. A LABELLED
+        -- message asks for three more than its text: one is the end marker's
+        -- cell, and the other two are the line either side of the centred text,
+        -- without which `├text┤` would read as a label with no arrow. An
+        -- unlabelled message asks for exactly one, so `├──────┤` and `├─────>┤`
+        -- are unchanged by the centring.
+        local run = mcols[k] + (mcols[k] > 0 and 3 or 1)
         x = math.max(x, port_col(boxes[lo]) + 1 + run - math.floor(boxes[j].w / 2))
       end
     end
@@ -442,12 +445,26 @@ function M.draw(graph, opts)
       cv_span(cv, row, right and (ct - 1) or (ct + 1), char, 1, group)
     end
 
-    -- Text sits on the run, against the SOURCE lifeline and reading towards the
-    -- target -- the same convention a horizontal flowchart edge label uses.
-    -- `place_x` has already reserved the room, so there is no collision case and
-    -- nothing to displace.
+    -- Text sits CENTRED on the run, with line either side of it -- the
+    -- conventional look, and what mermaid itself draws. `place_x` has already
+    -- reserved the room, so nothing has to be displaced.
+    --
+    -- `avail - 1` reserves the cell adjacent to the target for the marker
+    -- whether or not this arrow draws one; that is what keeps a leftward message
+    -- the mirror of a rightward one instead of sitting a column off.
+    --
+    -- Centring makes a label MORE likely to cover an intermediate lifeline: the
+    -- midpoint of a message is where a skipped participant tends to sit, so
+    -- `Alice -->> Carol` past a `Bob` column now draws `├──────direct──────>┤`
+    -- where anchoring to the source drew `├direct───┼────────>┤` and left the
+    -- crossing in sight. That is the call `flowchart.lua` already makes for a
+    -- colliding edge label -- text over a line is cosmetic, and it never draws a
+    -- connection that is not there -- but here it is the common case rather than
+    -- the rare one, so it is worth knowing before reading a golden.
     if msg.label then
-      local col = right and (cs + 1) or (cs - mcols[k])
+      local avail = math.abs(ct - cs) - 1
+      local slack = math.floor((avail - 1 - mcols[k]) / 2)
+      local col = right and (cs + 1 + slack) or (cs - mcols[k] - slack)
       cv_span(cv, row, col, msg.label, mcols[k], GROUP_EDGE_LABEL)
     end
   end

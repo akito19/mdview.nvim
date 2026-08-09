@@ -272,11 +272,11 @@ Participants are columns in source order, messages are rows in time order: >
     Alice->>Bob: ask            │ Alice │  │ Bob │  │ Carol │
     Bob->>Carol: check          └───┬───┘  └──┬──┘  └───┬───┘
     Carol-->>Alice: done            │         │         │
-                                    ├ask─────>┤         │
+                                    ├──ask───>┤         │
                                     │         │         │
-                                    │         ├check───>┤
+                                    │         ├─check──>┤
                                     │         │         │
-                                    ├<────────┼─────done┤
+                                    ├<───────done───────┤
                                     │         │         │
 <
 Supported:
@@ -297,6 +297,11 @@ Supported:
 - `A->>B: text` -- the text part is optional, is unquoted and trimmed, and runs
   to the end of the line. `;` does NOT separate statements here: message text
   routinely contains one, and mermaid terminates on the newline
+- message text is CENTRED between the two lifelines, as mermaid draws it. A
+  labelled message that skips a column therefore usually covers the lifeline it
+  passes -- `done` above hides Bob's. Text over a line is cosmetic and no
+  connection absent from the source is ever drawn, so the label wins; an
+  unlabelled message leaves the crossing visible as `┼`
 - `%%` comments, YAML frontmatter and `%%{init: ...}%%` directives are skipped
 
 Falls back to a code block:

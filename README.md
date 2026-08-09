@@ -452,11 +452,11 @@ sequenceDiagram             ┌───────┐  ┌─────┐  
 Alice->>Bob: ask            │ Alice │  │ Bob │  │ Carol │
 Bob->>Carol: check          └───┬───┘  └──┬──┘  └───┬───┘
 Carol-->>Alice: done            │         │         │
-                                ├ask─────>┤         │
+                                ├──ask───>┤         │
                                 │         │         │
-                                │         ├check───>┤
+                                │         ├─check──>┤
                                 │         │         │
-                                ├<────────┼─────done┤
+                                ├<───────done───────┤
                                 │         │         │
 ```
 
@@ -469,7 +469,7 @@ Carol-->>Alice: done            │         │         │
 | Messages | `->` `-->` `->>` `-->>` `-x` `--x` `-)` `--)`, one per line |
 | Message style | `--` is dashed and differs by **colour**, not by glyph |
 | End markers | `>` `<` for `->>`, `x` for `-x`, `)` `(` for the async `-)` |
-| Message text | `A->>B: text` — optional, quoted or bare, runs to end of line |
+| Message text | `A->>B: text` — optional, quoted or bare, runs to end of line, centred on the run |
 | Ignored | `%%` comments, frontmatter, `%%{init}%%` |
 
 | Falls back to a code block | Why |
@@ -486,6 +486,12 @@ Carol-->>Alice: done            │         │         │
 
 `;` does **not** separate statements here: message text is free text and
 routinely contains one, and mermaid itself terminates on the newline.
+
+Message text is centred between the two lifelines, as mermaid draws it, which
+means a label on a message that skips a column usually covers the lifeline it
+passes — `done` above hides Bob's. Text over a line is cosmetic and no
+connection that is not in the source is ever drawn, so the label wins; an
+unlabelled message leaves the crossing visible as `┼`.
 
 There are no bottom participant boxes. Mermaid repeats them; three rows and a
 duplicate of every label to restate what the top of the diagram already says is

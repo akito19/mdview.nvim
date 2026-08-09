@@ -377,6 +377,7 @@ end
 local PAIR = "sequenceDiagram\nparticipant A as Alice\nparticipant B as Bob\nA->>B: hello"
 local TRIO = "sequenceDiagram\nAlice->>Bob: ask\nBob->>Carol: check\nCarol-->>Alice: done"
 local BACK = "sequenceDiagram\nA->>B: ping\nB-->>A: pong"
+local BARE = "sequenceDiagram\nparticipant A\nparticipant B\nparticipant C\nA->>C"
 local SKIP = "sequenceDiagram\nparticipant A\nparticipant B\nparticipant C\nA->>C: over B\nB->>C: near"
 local OVER = "sequenceDiagram\nparticipant A\nparticipant B\nparticipant C\nA->>C: right past B\nB->>C: near"
 local WIDE = "sequenceDiagram\nA->>B: a much longer message than either box"
@@ -398,18 +399,21 @@ local ARROWS = table.concat({
 -- ASCII or a kana one, really does move with the option.
 local AMBIG = "sequenceDiagram\nparticipant A as ±°\nparticipant B as αβ\nA->>B: ─│─"
 
-local GOLDENS = { PAIR, TRIO, BACK, SKIP, OVER, WIDE, ALIAS, ARROWS, AMBIG }
+local GOLDENS = { PAIR, TRIO, BACK, BARE, SKIP, OVER, WIDE, ALIAS, ARROWS, AMBIG }
 
 T["layout"]["two participants and one message"] = function()
   -- The `┬` under each box is the bitmask's doing: the bottom border cell gains
   -- one BIT_D and picks its own glyph. Likewise `├` and `┤` where the message
   -- meets a lifeline.
+  --
+  -- The label is centred on the run, so there is line on both sides of it: the
+  -- conventional look, and what mermaid itself draws.
   eq(rows(PAIR), {
     "┌───────┐  ┌─────┐",
     "│ Alice │  │ Bob │",
     "└───┬───┘  └──┬──┘",
     "    │         │",
-    "    ├hello───>┤",
+    "    ├─hello──>┤",
     "    │         │",
   })
 end
@@ -420,69 +424,93 @@ T["layout"]["a three-participant conversation"] = function()
     "│ Alice │  │ Bob │  │ Carol │",
     "└───┬───┘  └──┬──┘  └───┬───┘",
     "    │         │         │",
-    "    ├ask─────>┤         │",
+    "    ├──ask───>┤         │",
     "    │         │         │",
-    "    │         ├check───>┤",
+    "    │         ├─check──>┤",
     "    │         │         │",
-    "    ├<────────┼─────done┤",
+    "    ├<───────done───────┤",
     "    │         │         │",
   })
 end
 
 T["layout"]["a right-to-left message points back"] = function()
   -- The marker sits in the run cell next to the TARGET either way, and the text
-  -- sits against the SOURCE, so direction reads off the row without colour.
+  -- is centred between the two lifelines, so the two directions are mirror
+  -- images and direction reads off the row without colour.
   eq(rows(BACK), {
-    "┌───┐  ┌───┐",
-    "│ A │  │ B │",
-    "└─┬─┘  └─┬─┘",
-    "  │      │",
-    "  ├ping─>┤",
-    "  │      │",
-    "  ├<─pong┤",
-    "  │      │",
+    "┌───┐   ┌───┐",
+    "│ A │   │ B │",
+    "└─┬─┘   └─┬─┘",
+    "  │       │",
+    "  ├─ping─>┤",
+    "  │       │",
+    "  ├<─pong─┤",
+    "  │       │",
   })
 end
 
-T["layout"]["a message over a non-adjacent pair crosses the lifeline between"] = function()
-  eq(rows(SKIP), {
+T["layout"]["an unlabelled message over a non-adjacent pair shows the crossing"] = function()
+  -- With no text to centre, the run keeps its single marker column and the
+  -- lifeline it passes stays visible as a `┼`. This golden is byte-identical to
+  -- the one the left-anchored layout drew -- centring moves labelled messages
+  -- only.
+  eq(rows(BARE), {
     "┌───┐  ┌───┐  ┌───┐",
     "│ A │  │ B │  │ C │",
     "└─┬─┘  └─┬─┘  └─┬─┘",
     "  │      │      │",
-    "  ├over B┼─────>┤",
-    "  │      │      │",
-    "  │      ├near─>┤",
+    "  ├──────┼─────>┤",
     "  │      │      │",
   })
 end
 
-T["layout"]["message text may cover a lifeline it passes"] = function()
+T["layout"]["a centred label lands on the lifeline it passes"] = function()
   -- The X sweep sizes the run for the text and the marker, not for the
-  -- lifelines in between, so a long enough label hides one for its own row.
+  -- lifelines in between, so a label drawn over one hides it for that row.
   -- Deliberate, and the same call `flowchart.lua` makes for an edge label that
-  -- collides with a line: text over a line is cosmetic, where displacing it
-  -- would cost a whole column of layout or the label itself.
+  -- collides with a line: text over a line is cosmetic, and it never draws a
+  -- connection that is not there, where displacing it would cost a whole column
+  -- of layout or the label itself.
+  --
+  -- Centring made this the COMMON case rather than the rare one. The midpoint
+  -- of a message is where an intermediate participant tends to sit, so almost
+  -- any label spanning a skipped column now covers it; compare the case above,
+  -- where an unlabelled message leaves the `┼` in plain sight.
+  eq(rows(SKIP), {
+    "┌───┐  ┌───┐   ┌───┐",
+    "│ A │  │ B │   │ C │",
+    "└─┬─┘  └─┬─┘   └─┬─┘",
+    "  │      │       │",
+    "  ├───over B────>┤",
+    "  │      │       │",
+    "  │      ├─near─>┤",
+    "  │      │       │",
+  })
+end
+
+T["layout"]["a label nearly as wide as its run still clears the marker"] = function()
+  -- The run always keeps one column each side of the text plus the marker's, so
+  -- even a label sized to the gap reads as an arrow rather than as `├text┤`.
   eq(rows(OVER), {
-    "┌───┐  ┌───┐  ┌───┐",
-    "│ A │  │ B │  │ C │",
-    "└─┬─┘  └─┬─┘  └─┬─┘",
-    "  │      │      │",
-    "  ├right past B>┤",
-    "  │      │      │",
-    "  │      ├near─>┤",
-    "  │      │      │",
+    "┌───┐  ┌───┐    ┌───┐",
+    "│ A │  │ B │    │ C │",
+    "└─┬─┘  └─┬─┘    └─┬─┘",
+    "  │      │        │",
+    "  ├─right past B─>┤",
+    "  │      │        │",
+    "  │      ├─near──>┤",
+    "  │      │        │",
   })
 end
 
 T["layout"]["a label wider than its boxes widens the gap"] = function()
   eq(rows(WIDE), {
-    "┌───┐                                  ┌───┐",
-    "│ A │                                  │ B │",
-    "└─┬─┘                                  └─┬─┘",
-    "  │                                      │",
-    "  ├a much longer message than either box>┤",
-    "  │                                      │",
+    "┌───┐                                    ┌───┐",
+    "│ A │                                    │ B │",
+    "└─┬─┘                                    └─┬─┘",
+    "  │                                        │",
+    "  ├─a much longer message than either box─>┤",
+    "  │                                        │",
   })
 end
 
@@ -495,7 +523,7 @@ T["layout"]["a <br/> alias makes a taller box, and every box matches it"] = func
     "│ client │  │     │",
     "└────┬───┘  └──┬──┘",
     "     │         │",
-    "     ├GET /x──>┤",
+    "     ├─GET /x─>┤",
     "     │         │",
   })
 end
@@ -503,27 +531,32 @@ end
 T["layout"]["every arrow form on one diagram"] = function()
   -- `->` and `-->` draw no marker at all; `-->` differs from `->` only in
   -- highlight group, which is why rows 5 and 7 are identical text.
+  --
+  -- Those two rows sit one column left of true centre because the cell next to
+  -- the target is reserved for a marker whether or not the arrow draws one.
+  -- That is what makes a leftward message the mirror of a rightward one, and it
+  -- costs a markerless arrow nothing but a column of slack.
   eq(rows(ARROWS), {
-    "┌───┐   ┌───┐",
-    "│ A │   │ B │",
-    "└─┬─┘   └─┬─┘",
-    "  │       │",
-    "  ├open───┤",
-    "  │       │",
-    "  ├dash───┤",
-    "  │       │",
-    "  ├solid─>┤",
-    "  │       │",
-    "  ├dashed>┤",
-    "  │       │",
-    "  ├lost──x┤",
-    "  │       │",
-    "  ├dlost─x┤",
-    "  │       │",
-    "  ├async─)┤",
-    "  │       │",
-    "  ├dasync)┤",
-    "  │       │",
+    "┌───┐     ┌───┐",
+    "│ A │     │ B │",
+    "└─┬─┘     └─┬─┘",
+    "  │         │",
+    "  ├──open───┤",
+    "  │         │",
+    "  ├──dash───┤",
+    "  │         │",
+    "  ├─solid──>┤",
+    "  │         │",
+    "  ├─dashed─>┤",
+    "  │         │",
+    "  ├──lost──x┤",
+    "  │         │",
+    "  ├─dlost──x┤",
+    "  │         │",
+    "  ├─async──)┤",
+    "  │         │",
+    "  ├─dasync─)┤",
+    "  │         │",
   })
 end
 
@@ -576,7 +609,7 @@ T["ambiwidth"]["double redraws the same diagram twice as wide"] = function()
     "│  Alice   │    │  Bob   │",
     "└──┬──┘    └──┬─┘",
     "      │                │",
-    "      ├hello ────> ┤",
+    "      ├──hello ──> ┤",
     "      │                │",
   })
 end
@@ -590,7 +623,7 @@ T["ambiwidth"]["an ambiguous-width label keeps its column count"] = function()
     "│  ±°  │    │  αβ  │",
     "└──┬─┘    └──┬─┘",
     "      │              │",
-    "      ├─│────> ┤",
+    "      ├──│───> ┤",
     "      │              │",
   })
   vim.o.ambiwidth = "single"
@@ -599,7 +632,7 @@ T["ambiwidth"]["an ambiguous-width label keeps its column count"] = function()
     "│ ±° │  │ αβ │",
     "└──┬─┘  └──┬─┘",
     "   │       │",
-    "   ├─│────>┤",
+    "   ├──│───>┤",
     "   │       │",
   })
 end
@@ -702,17 +735,19 @@ T["layout"]["a lifeline junction is coloured as structure, not as an edge"] = fu
   -- the `├` / `┤` / `┼` where a message meets one stay border-coloured -- the
   -- same thing flowchart does where an edge meets a box.
   local res = draw(PAIR)
-  local row = res.lines[5] -- "    ├hello───>┤"
+  local row = res.lines[5] -- "    ├─hello──>┤"
   local at = {}
   for _, d in ipairs(res.decorations) do
     if d.line == 4 then
       at[#at + 1] = { row:sub(d.col_start + 1, d.col_end), d.group }
     end
   end
+  -- The centred label splits the run into two edge spans, one each side.
   eq(at, {
     { "├", "MdviewMermaidBox" },
+    { "─", "MdviewMermaidEdge" },
     { "hello", "MdviewMermaidEdgeLabel" },
-    { "───>", "MdviewMermaidEdge" },
+    { "──>", "MdviewMermaidEdge" },
     { "┤", "MdviewMermaidBox" },
   })
 end

@@ -207,6 +207,25 @@ participants count against `max_nodes` while messages count against `max_edges`:
 the two guards already there do the same job, and a second pair would have been
 config surface with no user-visible difference.
 
+**Message text is centred on the run, and the flowchart convention it first
+borrowed was the wrong one.** The plan placed a message label the way a
+horizontal flowchart edge label is placed — one column after the source — on the
+grounds that both are text sitting on a horizontal run. It drew `├hello───>┤`,
+the label welded to the source with every spare column heaped up in front of the
+marker. The convention had transferred without its context: a flowchart's
+horizontal channel is *sized from the labels in it*, so left-aligned and centred
+are near enough the same picture there, whereas a sequence run is sized by the
+participant boxes above it and routinely has slack to distribute. Centring is
+what mermaid draws, and it makes a leftward message the exact mirror of a
+rightward one rather than two shapes that merely share a row.
+
+Its cost was accepted knowingly: the midpoint of a message is where an
+intermediate participant tends to sit, so a labelled message that skips a column
+now usually covers the `┼` it crosses. That is decision 7's colliding-label call
+— text over a line is cosmetic and never invents a connection — promoted from
+the rare case to the common one.
+
 **Rule extracted:** a second instance of a thing is what tells you which parts of
-the first were general. Split before extending, and let the new type say what it
-does not need.
+the first were general. Split before extending, let the new type say what it does
+not need — and check that anything it *does* inherit still has the conditions
+that made it right.
