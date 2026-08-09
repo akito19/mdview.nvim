@@ -29,7 +29,11 @@ lua/mdview/
   highlights.lua         Mdview* groups, including ones computed by blending
   parser.lua             tree-sitter walk -> flat IR
   renderer.lua           IR -> { lines, decorations }   PURE: no API access
-  mermaid.lua            mermaid subset -> { lines, decorations }   PURE
+  mermaid/               mermaid subset -> { lines, decorations }   PURE
+    init.lua             keyword -> diagram-type dispatch; parse/draw/render
+    text.lua             shared: trim, unquote, labels, the prelude
+    canvas.lua           shared: the column grid, bitmask glyphs, emit
+    flowchart.lua        the flowchart/graph subset: parse, lay out, draw
   window.lua             scratch buffer, split, session lifecycle, extmarks
 ```
 
@@ -175,7 +179,7 @@ These have each caused a real bug. Read before touching layout code.
 
 ### Mermaid
 
-`mermaid.lua` parses a narrow subset of mermaid `flowchart` and draws it on a
+`mermaid/` parses a narrow subset of mermaid `flowchart` and draws it on a
 canvas whose every column is exactly `strdisplaywidth("─")` cells wide. That is
 the same widen-to-a-whole-number-of-`─` correction the table grid needs, promoted
 from an end-stage fix to the unit of layout, so alignment is structural rather
@@ -189,6 +193,13 @@ glyph**. End markers are ASCII `v ^ < > o x`.
 Anything outside the subset returns `nil`, and `render_code_block` falls through
 to the plain labelled code block. See [mermaid.md](mermaid.md) for the subset,
 the layout pipeline, and the decisions taken while building it.
+
+`mermaid/init.lua` reads the first keyword and hands the body to the module that
+owns that diagram type; `text.lua` and `canvas.lua` hold what any type needs, and
+`flowchart.lua` holds everything specific to the one type v1 draws. A header
+naming no supported type is the same `not_flowchart` bail an unparsable one is.
+See [mermaid-sequence.md](mermaid-sequence.md) for why the package is shaped that
+way.
 
 ## Out of Scope
 
