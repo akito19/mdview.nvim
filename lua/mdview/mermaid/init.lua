@@ -8,6 +8,7 @@
 ---   mdview.mermaid.text        trimming, labels, the frontmatter/comment prelude
 ---   mdview.mermaid.canvas      the column grid, bitmask glyphs, emit
 ---   mdview.mermaid.flowchart   the `flowchart` / `graph` subset
+---   mdview.mermaid.sequence    the `sequenceDiagram` subset
 ---
 --- `plan/mermaid.md` defines the supported subset; everything outside it is a
 --- *hard bail* -- `nil, reason` -- so the caller can fall back to rendering the
@@ -18,6 +19,7 @@
 --- handling, no buffer, window or API access.
 local text = require("mdview.mermaid.text")
 local flowchart = require("mdview.mermaid.flowchart")
+local sequence = require("mdview.mermaid.sequence")
 
 local M = {}
 
@@ -28,6 +30,7 @@ local M = {}
 local KINDS = {
   flowchart = flowchart,
   graph = flowchart,
+  sequencediagram = sequence,
 }
 
 --- The first word of the first statement, lowercased, or nil if the body has no

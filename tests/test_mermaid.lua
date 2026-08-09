@@ -98,7 +98,10 @@ T["header"]["may share a line with statements via `;`"] = function()
 end
 
 T["header"]["another diagram type is not_flowchart"] = function()
-  bails("sequenceDiagram\nAlice->>John: hi", "not_flowchart")
+  -- Deliberately a type the package does not know at all: `sequenceDiagram` is
+  -- dispatched to its own module now and no longer reaches this bail.
+  bails("gantt\ntitle A schedule", "not_flowchart")
+  bails("stateDiagram-v2\n[*] --> Still", "not_flowchart")
 end
 
 T["header"]["an empty body is not_flowchart"] = function()
@@ -854,7 +857,7 @@ T["fallback"]["render returns nil for anything the parser bails on"] = function(
     "flowchart TD\nA --> B\nB --> A",
     "flowchart TD\nA <--> B",
     "flowchart TD\na.b --> c",
-    "sequenceDiagram\nA ->> B: hi",
+    "gantt\ntitle A schedule",
     "flowchart TD\nA -->|x<br/>y| B",
   }) do
     eq({ src, mermaid.render(vim.split(src, "\n", { plain = true })) }, { src, nil })

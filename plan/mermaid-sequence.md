@@ -264,6 +264,49 @@ New `tests/test_mermaid_sequence.lua`, structured like `tests/test_mermaid.lua`.
   frames are deferred, why there are no bottom boxes, and why dashed is a colour.
 - `CLAUDE.md` — the layout table gains the package.
 
+## Amendments from stage 2 (as built)
+
+Things the plan above got wrong or left open, resolved during implementation.
+Where this section and the sections above disagree, this section wins.
+
+1. **Message text is centred on the run, not left-aligned against the source.**
+   Layout step 6 specified the LR edge-label convention — text one column after
+   the source lifeline — and what it drew was `├hello───>┤`, with the label
+   hugging the source and all the slack piled up in front of the marker. Three
+   variants were rendered and compared; centring won on every one of them.
+   It is the conventional look, it is what mermaid itself draws, and it makes a
+   leftward message the exact mirror of a rightward one instead of two shapes
+   that happen to share a row.
+
+   Two consequences the plan did not anticipate:
+
+   - **A labelled message reserves three run columns beyond its text**, not one.
+     One is still the marker's; the other two are the line either side of the
+     centred label, without which `├text┤` would read as a caption rather than
+     an arrow. An *unlabelled* message is unchanged — it keeps its single marker
+     column, so `├──────┤` and `├─────>┤` are byte-identical to what stage 2
+     first drew.
+   - **The centring reserves the cell next to the target for a marker whether
+     or not the arrow draws one.** `->` and `-->` therefore sit one column left
+     of true centre. That asymmetry is the price of the mirror symmetry between
+     directions, and a column of slack on a markerless arrow is not worth
+     special-casing for.
+
+2. **Centring makes a long label likely to cover a lifeline it passes.** The
+   midpoint of a message is exactly where an intermediate participant tends to
+   sit, so `Alice -->> Carol` across a `Bob` column draws `├──────direct──────>┤`
+   where the left-anchored version left the crossing visible as
+   `├direct───┼────────>┤`. Same call `flowchart.lua` already makes for a
+   colliding edge label — text over a line is cosmetic, and it never draws a
+   connection that is not in the source, whereas displacing the label would cost
+   a column of layout or the label itself. What changed is the frequency: this
+   was the rare case under step 6 and is the common one now, so it is stated in
+   `sequence.lua`, in the goldens and in both user-facing documents rather than
+   left to be rediscovered.
+
+   The suite keeps an unlabelled crossing as its own golden, so the `┼` a
+   message makes over a lifeline is still pinned by something.
+
 ## Deliberately deferred
 
 Follow-up issues, not silent gaps: `alt` / `opt` / `loop` / `par` / `critical`

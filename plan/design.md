@@ -34,6 +34,7 @@ lua/mdview/
     text.lua             shared: trim, unquote, labels, the prelude
     canvas.lua           shared: the column grid, bitmask glyphs, emit
     flowchart.lua        the flowchart/graph subset: parse, lay out, draw
+    sequence.lua         the sequenceDiagram subset: parse, lay out, draw
   window.lua             scratch buffer, split, session lifecycle, extmarks
 ```
 
@@ -179,8 +180,9 @@ These have each caused a real bug. Read before touching layout code.
 
 ### Mermaid
 
-`mermaid/` parses a narrow subset of mermaid `flowchart` and draws it on a
-canvas whose every column is exactly `strdisplaywidth("─")` cells wide. That is
+`mermaid/` parses a narrow subset of mermaid `flowchart` and `sequenceDiagram`
+and draws it on a canvas whose every column is exactly
+`strdisplaywidth("─")` cells wide. That is
 the same widen-to-a-whole-number-of-`─` correction the table grid needs, promoted
 from an end-stage fix to the unit of layout, so alignment is structural rather
 than checked.
@@ -188,25 +190,35 @@ than checked.
 Lines merge by bitmask: each cell accumulates four bits (up/down/left/right) and
 the glyph is chosen once at the end. The sixteen masks land on exactly the eleven
 box-drawing characters already in the safe set, so diagrams introduced **no new
-glyph**. End markers are ASCII `v ^ < > o x`.
+glyph**. End markers are ASCII `v ^ < > o x`, plus `) (` for a sequence
+diagram's async message.
 
 Anything outside the subset returns `nil`, and `render_code_block` falls through
-to the plain labelled code block. See [mermaid.md](mermaid.md) for the subset,
-the layout pipeline, and the decisions taken while building it.
+to the plain labelled code block. See [mermaid.md](mermaid.md) for the flowchart
+subset and its layout pipeline, and [mermaid-sequence.md](mermaid-sequence.md)
+for the sequence one.
 
 `mermaid/init.lua` reads the first keyword and hands the body to the module that
-owns that diagram type; `text.lua` and `canvas.lua` hold what any type needs, and
-`flowchart.lua` holds everything specific to the one type v1 draws. A header
+owns that diagram type; `text.lua` and `canvas.lua` hold what any type needs,
+while `flowchart.lua` and `sequence.lua` hold what is specific to one. A header
 naming no supported type is the same `not_flowchart` bail an unparsable one is.
-See [mermaid-sequence.md](mermaid-sequence.md) for why the package is shaped that
-way.
+
+A sequence diagram needs none of the flowchart machinery: participants are
+columns in source order and messages are rows in time order, so there is no
+ranking, no channel routing and no search — one left-to-right sweep places every
+column, because every constraint runs from a lower index to a higher one.
 
 ## Out of Scope
 
 Scroll sync, live `TextChanged` rendering, `gx` link opening, footnotes, and
 rendered HTML blocks (shown as raw text).
 
-For mermaid specifically: `subgraph` containers, cycles, node shape
+For mermaid flowcharts: `subgraph` containers, cycles, node shape
 differentiation, crossing minimisation, `classDef` colours, double-ended arrows,
-entity-code decoding, multi-row edge labels, and every diagram type other than
-`flowchart`.
+entity-code decoding, and multi-row edge labels.
+
+For mermaid sequence diagrams: `alt` / `opt` / `loop` / `par` / `critical`
+frames, activations, self-messages, notes, `autonumber`, `box`, `create` /
+`destroy`, actors, and participant links.
+
+Every diagram type other than `flowchart` and `sequenceDiagram`.
