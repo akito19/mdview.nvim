@@ -922,6 +922,94 @@ end
 -- Character-set guarantees
 --------------------------------------------------------------------------
 
+---------------------------------------------------------------------------
+-- Mermaid
+---------------------------------------------------------------------------
+
+T["mermaid"] = MiniTest.new_set()
+
+--- The rendered lines of a single ```mermaid fence.
+local function mermaid_lines(body, cfg, block)
+  local res = render({ { type = "code_block", lang = "mermaid", lines = body } }, cfg, { width = 60 })
+  return res.lines, res.decorations
+end
+
+T["mermaid"]["a supported fence is drawn as a diagram"] = function()
+  local lines = mermaid_lines({ "flowchart TD", "A[One] --> B[Two]" })
+  -- The language label is kept, so a reader can tell a drawn diagram from
+  -- hand-written ASCII art in the source.
+  eq(lines[1], "  mermaid")
+  eq(lines[2], "  ┌─────┐")
+  eq(lines[3], "  │ One │")
+  eq(vim.tbl_contains(lines, "  │ Two │"), true)
+end
+
+T["mermaid"]["an unsupported fence renders exactly like any other code block"] = function()
+  -- The fallback must be indistinguishable from the behaviour before diagrams
+  -- existed: same lines, same decorations, just a different language tag.
+  local body = { "flowchart TD", "subgraph s", "A --> B", "end" }
+  local drawn = render({ { type = "code_block", lang = "mermaid", lines = body } }, nil, { width = 60 })
+  local plain = render({ { type = "code_block", lang = "text", lines = body } }, nil, { width = 60 })
+  eq(#drawn.lines, #plain.lines)
+  for i = 2, #plain.lines do
+    eq(drawn.lines[i], plain.lines[i])
+  end
+  eq(#drawn.decorations, #plain.decorations)
+end
+
+T["mermaid"]["elements.mermaid = false keeps the fence as source"] = function()
+  local cfg = cfg_copy()
+  cfg.elements.mermaid = false
+  local lines = mermaid_lines({ "flowchart TD", "A --> B" }, cfg)
+  eq(lines[2], "  flowchart TD")
+end
+
+T["mermaid"]["the block marker style falls back, having no box drawing"] = function()
+  local lines = mermaid_lines({ "flowchart TD", "A --> B" }, block_cfg())
+  eq(lines[2], "  flowchart TD")
+end
+
+T["mermaid"]["mermaid.language_label = false drops the header line"] = function()
+  local cfg = cfg_copy()
+  cfg.mermaid.language_label = false
+  local lines = mermaid_lines({ "flowchart TD", "A[One] --> B[Two]" }, cfg)
+  eq(lines[1], "  ┌─────┐")
+end
+
+T["mermaid"]["max_nodes falls back rather than drawing a huge diagram"] = function()
+  local body = { "flowchart TD" }
+  for i = 1, 10 do
+    body[#body + 1] = ("N%d --> N%d"):format(i, i + 1)
+  end
+  local cfg = cfg_copy()
+  cfg.mermaid.max_nodes = 5
+  eq(mermaid_lines(body, cfg)[2], "  flowchart TD")
+  cfg.mermaid.max_nodes = 60
+  -- Diagram rows are padded to the canvas width, so this is a prefix check
+  -- rather than an equality: the first row is not necessarily the widest.
+  eq(mermaid_lines(body, cfg)[2]:sub(1, #"  ┌"), "  ┌")
+end
+
+T["mermaid"]["a diagram inside a blockquote keeps the bar and the indent"] = function()
+  local res = render({
+    { type = "code_block", lang = "mermaid", quote = 1, lines = { "flowchart TD", "A --> B" } },
+  }, nil, { width = 60 })
+  for _, line in ipairs(res.lines) do
+    eq(line:sub(1, #"█ "), "█ ")
+  end
+end
+
+T["mermaid"]["decoration byte columns land inside their own line"] = function()
+  local lines, decs = mermaid_lines({ "flowchart TD", "A[One] -->|yes| B[Two]" })
+  local bad = {}
+  for _, d in ipairs(decs) do
+    if d.kind == "hl" and (d.col_end > #(lines[d.line + 1] or "")) then
+      bad[#bad + 1] = d
+    end
+  end
+  eq(bad, {})
+end
+
 T["character set"] = MiniTest.new_set()
 
 --- A document exercising every element the renderer knows about, whose own
@@ -948,6 +1036,10 @@ local function kitchen_sink()
     { type = "list_item", depth = 0, checkbox = "unchecked", inline = { { text = "todo" } } },
     { type = "code_block", lang = "lua", lines = { "local x = 1", "print(x)" } },
     { type = "code_block", lines = { "no language" } },
+    -- A drawn diagram, so the character-set guarantees below cover the mermaid
+    -- path too. Under the block style this falls back to a code block whose
+    -- body is the ASCII source, which is what keeps that variant pure ASCII.
+    { type = "code_block", lang = "mermaid", lines = { "flowchart TD", "A[One] --> B[Two]" } },
     { type = "rule" },
     {
       type = "table",

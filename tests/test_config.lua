@@ -204,4 +204,39 @@ T["bullets"]["a non-string entry warns and falls back"] = function()
   eq(get("icons.bullets"), { "•", "‣", "·" })
 end
 
+T["mermaid"] = MiniTest.new_set()
+
+T["mermaid"]["defaults stand alone"] = function()
+  eq(get("elements.mermaid"), true)
+  eq(get("mermaid.language_label"), true)
+  eq(get("mermaid.max_nodes"), 60)
+  eq(get("mermaid.max_edges"), 120)
+end
+
+T["mermaid"]["a non-positive limit warns and keeps the default"] = function()
+  -- Zero would disable diagrams by way of a size check, which is a confusing
+  -- way to spell `elements.mermaid = false`.
+  setup([[{ mermaid = { max_nodes = 0 } }]])
+  warned(only_note(), "invalid `mermaid.max_nodes`")
+  eq(get("mermaid.max_nodes"), 60)
+end
+
+T["mermaid"]["a fractional limit warns and keeps the default"] = function()
+  setup([[{ mermaid = { max_edges = 2.5 } }]])
+  warned(only_note(), "invalid `mermaid.max_edges`")
+  eq(get("mermaid.max_edges"), 120)
+end
+
+T["mermaid"]["a wrong-typed limit is caught by the shared validator"] = function()
+  setup([[{ mermaid = { max_nodes = "lots" } }]])
+  warned(only_note(), "option `mermaid.max_nodes` expects number, got string")
+  eq(get("mermaid.max_nodes"), 60)
+end
+
+T["mermaid"]["a valid limit is kept"] = function()
+  setup([[{ mermaid = { max_nodes = 10 } }]])
+  eq(get("mermaid.max_nodes"), 10)
+  eq(get("mermaid.max_edges"), 120)
+end
+
 return T

@@ -229,6 +229,38 @@ T["table groups"]["MdviewTableBorder is reinstated and overridable"] = function(
   eq(fg_of("MdviewTableBorder"), 0x123456)
 end
 
+T["mermaid groups"] = MiniTest.new_set()
+
+T["mermaid groups"]["every diagram group is defined and overridable"] = function()
+  child.lua([[require("mdview.highlights").apply()]])
+  for _, name in ipairs({
+    "MdviewMermaidBox",
+    "MdviewMermaidLabel",
+    "MdviewMermaidEdge",
+    "MdviewMermaidEdgeDim",
+    "MdviewMermaidEdgeStrong",
+    "MdviewMermaidEdgeLabel",
+  }) do
+    eq({ name, child.lua_get(("vim.fn.hlexists(%q)"):format(name)) }, { name, 1 })
+  end
+  -- `default = true` throughout, so a colorscheme always wins.
+  child.lua([[
+    vim.api.nvim_set_hl(0, "MdviewMermaidEdge", { fg = 0x123456 })
+    require("mdview.highlights").apply()
+  ]])
+  eq(fg_of("MdviewMermaidEdge"), 0x123456)
+end
+
+T["mermaid groups"]["they need no background, so nothing to degrade"] = function()
+  -- Diagrams are drawn with glyphs rather than tinted bands, so none of these
+  -- groups depends on a resolvable Normal.bg the way the code block band does.
+  child.lua([[
+    vim.o.termguicolors = false
+    require("mdview.highlights").apply()
+  ]])
+  eq(child.lua_get([[vim.fn.hlexists("MdviewMermaidBox")]]), 1)
+end
+
 T["graceful degradation"] = MiniTest.new_set()
 
 T["graceful degradation"]["unset Normal.bg skips backgrounds entirely"] = function()

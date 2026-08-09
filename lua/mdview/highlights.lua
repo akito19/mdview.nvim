@@ -65,6 +65,16 @@ local defs = {
   { "MdviewTableBorder", { "@punctuation.delimiter", "Comment", "NonText" } },
   -- Column separator when `tables.borders = false` (no horizontal rules).
   { "MdviewTableSep", { "@punctuation.delimiter", "Comment", "NonText" } },
+  -- A mermaid diagram. Node borders read as structure, like a table's grid;
+  -- edges are the same weight, because the glyph set has only one. `-.->` and
+  -- `==>` therefore differ from `-->` by COLOUR alone -- there is no dashed or
+  -- heavy box-drawing character to switch to.
+  { "MdviewMermaidBox", { "@punctuation.delimiter", "Comment", "NonText" } },
+  { "MdviewMermaidLabel", {} },
+  { "MdviewMermaidEdge", { "@punctuation.delimiter", "Comment", "NonText" } },
+  { "MdviewMermaidEdgeDim", { "NonText", "Comment" } },
+  { "MdviewMermaidEdgeStrong", { "@punctuation.delimiter", "Comment", "NonText" }, { bold = true } },
+  { "MdviewMermaidEdgeLabel", { "Comment" } },
 }
 
 --- { name, source group whose fg is blended, alpha }
