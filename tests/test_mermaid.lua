@@ -29,6 +29,34 @@ local function bails(src, reason, opts)
   eq({ g == nil, r }, { true, reason })
 end
 
+--- One statement whose `&` groups make an `a` x `b` cross product, all ids
+--- distinct. Used by the resource-bound cases below.
+local function cross_product(a, b)
+  local left, right = {}, {}
+  for i = 1, a do
+    left[i] = ("A%d"):format(i)
+  end
+  for i = 1, b do
+    right[i] = ("B%d"):format(i)
+  end
+  return table.concat(left, " & ") .. " --> " .. table.concat(right, " & ")
+end
+
+--- Assert the parse bails with `reason` *and* does not take a pathological
+--- amount of time getting there. The bound is loose on purpose: it is here to
+--- catch a quadratic coming back, not to measure anything, so the inputs below
+--- are sized to be two or three orders of magnitude outside it.
+local BAIL_BUDGET_MS = 500
+
+local function bails_fast(src, reason, opts)
+  local t0 = vim.uv.hrtime()
+  bails(src, reason, opts)
+  local ms = (vim.uv.hrtime() - t0) / 1e6
+  if ms > BAIL_BUDGET_MS then
+    error(("bailed with %q as expected, but took %.0f ms"):format(reason, ms))
+  end
+end
+
 --- Node ids in order, as one string.
 local function ids(g)
   local out = {}
@@ -520,6 +548,46 @@ T["bails"]["a graph just inside the default limits parses"] = function()
   local g = mermaid.parse(lines)
   eq(#g.nodes, 60)
   eq(#g.edges, 59)
+end
+
+T["bails"]["a cross product exactly at max_edges still parses"] = function()
+  -- The budget is now enforced inside the cross product, so its boundary is
+  -- worth pinning from both sides: 10 x 10 edges is exactly the budget.
+  local g = graph(
+    "flowchart TB\n" .. cross_product(10, 10),
+    { max_nodes = 20, max_edges = 100 }
+  )
+  eq(#g.edges, 100)
+  bails("flowchart TB\n" .. cross_product(10, 11), "too_big", { max_nodes = 21, max_edges = 100 })
+end
+
+T["bails"]["an oversized `&` group bails before building it"] = function()
+  -- 3200 members a side: one statement, 48 KB, all ids distinct. Before the
+  -- budget moved inside the loops this materialised 10.2M edge tables first --
+  -- 1.1 s and 2.6 GB on the machine this was written on -- because the guard
+  -- ran only once `parse_statement` had returned. The size is chosen so that
+  -- the old behaviour is two orders of magnitude outside the bound below; the
+  -- bound itself is loose enough not to depend on the machine.
+  bails_fast("flowchart TB\n" .. cross_product(3200, 3200), "too_big")
+end
+
+T["bails"]["a cross product bails as soon as the budget is spent"] = function()
+  -- Same shape and size, but with `max_nodes` raised so the `&`-group cap
+  -- cannot fire and the in-loop edge check is what stops it. Both guards need
+  -- their own case: with the defaults the group cap gets there first, so this
+  -- is the only way to exercise the cross product's own bail.
+  bails_fast(
+    "flowchart TB\n" .. cross_product(3200, 3200),
+    "too_big",
+    { max_nodes = 10000, max_edges = 120 }
+  )
+end
+
+T["bails"]["a long dotted run bails quickly"] = function()
+  -- `-.` sends the connector parser into `labelled`, whose only dotted closer
+  -- is `%.+%-`: it used to be retried at every offset, backtracking over the
+  -- whole remaining run each time. 32,000 dots took 2.1 s.
+  bails_fast("flowchart TB\nA-." .. string.rep(".", 32000), "unparsed")
 end
 
 ---------------------------------------------------------------------------
