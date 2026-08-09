@@ -121,7 +121,7 @@ The complete set of non-ASCII characters mdview's own decoration emits:
 | `•` | U+2022 BULLET | in Monaco | list bullet, depth 1 (GitHub's own bullet) |
 | `‣` | U+2023 TRIANGULAR BULLET | in Monaco | list bullet, depth 2 |
 | `·` | U+00B7 MIDDLE DOT | in Monaco | list bullet, depth 3 |
-| `┌┬┐├┼┤└┴┘─│` | U+2500–257F | terminal-drawn | table grid |
+| `┌┬┐├┼┤└┴┘─│` | U+2500–257F | terminal-drawn | table grid, mermaid diagrams |
 
 (v2 dropped box drawing after blaming the font for gaps between `─` glyphs. The
 diagnosis was wrong: the terminal never asked the font for them. The heading
@@ -236,6 +236,7 @@ require("mdview").setup({
     links = true,
     tables = true,
     horizontal_rules = true,
+    mermaid = true,          -- draw ```mermaid flowcharts (see below)
   },
   -- how every bar / bullet / border is drawn:
   --   "glyph" -- real characters, from the verified-safe set only
@@ -375,11 +376,70 @@ invisible marker would erase the hierarchy.
   and below the last — with a tinted+bold header row and `:---:` alignment
   honored. Never wrapped: a wide table scrolls
 - Horizontal rules: a blank line tinted across the full window width
+- Mermaid flowcharts: a ` ```mermaid ` fence inside the [supported
+  subset](#mermaid-diagrams) is laid out and drawn with the same box-drawing
+  glyph set as tables. Never wrapped: a wide diagram scrolls
 - Body text (paragraphs, list items, blockquote content, headings) is
   hard-wrapped to the preview's width, measured in display cells, with a hanging
   indent on continuation lines and inline highlight spans split across the
   break. Tables, code blocks and rules are never wrapped
 - HTML blocks and unknown elements fall back to raw text
+
+## Mermaid diagrams
+
+A ` ```mermaid ` fence is drawn as a box-and-line diagram, in pure Lua, with no
+external process and no new glyphs — the same `┌┬┐├┼┤└┴┘─│` the table grid
+already uses, plus ASCII end markers.
+
+```
+flowchart TD                      ┌───────┐
+A[Parse] --> B[Layout]            │ Parse │
+B --> C[Draw]                     └───┬───┘
+                                      v
+                                 ┌────┴───┐
+                                 │ Layout │
+                                 └────┬───┘
+                                      v
+                                  ┌───┴──┐
+                                  │ Draw │
+                                  └──────┘
+```
+
+**Anything outside the supported subset falls back to an ordinary labelled code
+block** — no error, no half-drawn diagram. A wrong diagram is worse than no
+diagram, so every ambiguity resolves towards the fallback.
+
+| Supported | |
+|---|---|
+| Header | `flowchart` / `graph`, direction `TB` `TD` `BT` `LR` `RL` (default `TB`) |
+| Nodes | all fifteen bracket shapes — but every one **draws as a rectangle** |
+| Node labels | quoted text, `<br/>` line breaks, `:::class` suffix (ignored) |
+| Edges | `-->` `---` `-.->` `==>` `--o` `--x` `~~~`, any length |
+| Edge style | `-.->` and `==>` differ by **colour**, not by glyph |
+| Edge labels | `A -->\|text\| B` and `A -- text --> B` |
+| Chaining | `A --> B --> C`, `A & B --> C & D`, and mixed forms |
+| Ignored | `%%` comments, `classDef` / `class` / `style` / `linkStyle` / `click`, frontmatter, `%%{init}%%` |
+
+| Falls back to a code block | Why |
+|---|---|
+| `subgraph` … `end` | containers change the layout materially |
+| Cycles | the layout is layered and DAG-only |
+| `<-->` `o--o` `x--x` | a source-end marker collides with the box border, and drawing them one-directional would be wrong |
+| `<br/>` in an *edge* label | edge labels occupy a single row |
+| Node ids outside `[A-Za-z0-9_]` | mermaid documents no id grammar, so the conservative class is the only defensible one |
+| `@{ shape: … }`, edge ids, markdown-string labels | not implemented |
+| More than `max_nodes` / `max_edges` | a guard, so one pathological fence cannot stall a `:w` |
+| `marker_style = "block"` | a diagram is nothing but box drawing |
+
+Numeric entity codes (`#35;`, `#9829;`) are left literal rather than decoded:
+decoding one would have the renderer synthesise a glyph outside the verified-safe
+set from pure-ASCII source.
+
+Node shapes are not differentiated because box drawing has no diamond and no
+circle, and adding `╭╮╰╯` for rounded corners would only solve a third of the
+problem. Layout is deliberately deterministic — items are ordered by first
+appearance rather than by crossing minimisation — so the same source always
+renders the same way.
 
 ## Development
 
@@ -396,6 +456,8 @@ Manual check: `nvim -u tests/minit.lua README.md`, then `:MdView`.
 - Opening links with `gx` from the preview
 - Footnotes
 - Rendered HTML blocks (currently shown as raw text)
+- Mermaid: `subgraph` containers, cycles, node shape differentiation, crossing
+  minimisation, `classDef` colours, and diagram types other than `flowchart`
 
 ## License
 

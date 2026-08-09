@@ -11,6 +11,7 @@ CONTENTS                                                       *mdview-contents*
   3. Commands ..................................... |mdview-commands|
   4. Rendering & glyph set ........................ |mdview-glyphs|
      Wrapping & scrolling ......................... |mdview-wrapping|
+     Mermaid diagrams ............................. |mdview-mermaid|
   5. Configuration ................................ |mdview-configuration|
   6. Highlight groups ............................. |mdview-highlights|
   7. Lua API ...................................... |mdview-api|
@@ -210,6 +211,54 @@ the last render, so resizing an unrelated window costs nothing.
 logical line and the whole buffer scrolls. `text_width` only ever CAPS the
 width, so text never runs off the right edge.
 
+MERMAID DIAGRAMS                                                *mdview-mermaid*
+
+A ```mermaid fence is laid out and drawn as a box-and-line diagram, in pure Lua
+with no external process, using the same box-drawing set as the table grid plus
+ASCII end markers (`v ^ < > o x`). Like a table it is never wrapped: a wide
+diagram scrolls sideways.
+
+Anything outside the supported subset falls back to an ordinary labelled code
+block -- no error and no half-drawn diagram. A wrong diagram is worse than no
+diagram, so every ambiguity resolves towards the fallback.
+
+Supported:
+
+- `flowchart` or `graph`, direction `TB` `TD` `BT` `LR` `RL` (default `TB`),
+  keyword and direction matched case-insensitively
+- all fifteen classic bracket node shapes -- but every one DRAWS AS A
+  RECTANGLE, because box drawing has neither a diamond nor a circle
+- quoted labels, `<br/>` line breaks in a NODE label, a `:::class` suffix
+- `-->` `---` `-.->` `==>` `--o` `--x` `~~~`, at any length; `-.->` and `==>`
+  differ from `-->` by HIGHLIGHT GROUP, not by glyph, since the glyph set has
+  one line weight
+- edge labels in both spellings, `A -->|text| B` and `A -- text --> B`
+- chaining and `&`, including mixed forms: a statement is a sequence of node
+  groups separated by connectors, and each adjacent pair becomes the cross
+  product of its members
+- `%%` comments, `classDef`, `class`, `style`, `linkStyle`, `click`, YAML
+  frontmatter and `%%{init: ...}%%` directives are recognised and skipped
+
+Falls back to a code block:
+
+- `subgraph` ... `end`, and cycles
+- `<-->`, `o--o`, `x--x`: a source-end marker would collide with the box
+  border, and drawing them one-directional would be semantically wrong
+- `<br/>` inside an EDGE label, which occupies a single row
+- a node id outside `[A-Za-z0-9_]`; mermaid documents no id grammar, and the
+  conservative class also avoids the `---o` / `---x` lexing ambiguity
+- `@{ shape: ... }` node metadata, edge ids, markdown-string labels
+- more than `mermaid.max_nodes` nodes or `mermaid.max_edges` edges
+- `marker_style = "block"`, which has no box drawing to fall back on
+
+Numeric entity codes (`#35;`, `#9829;`) are left literal rather than decoded:
+decoding one would have the renderer synthesise a glyph from outside the
+verified-safe set out of pure-ASCII source (see |mdview-glyphs|).
+
+Layout is deterministic. Items are ordered within a layer by first appearance
+in the source rather than by crossing minimisation, so the same fence always
+renders identically -- which is what makes the golden tests meaningful.
+
 ==============================================================================
 5. CONFIGURATION                                          *mdview-configuration*
 
@@ -281,6 +330,13 @@ bar -- a zero-width marker would be invisible. Lists nested deeper than
 `│` alone (the v4 look); `tables.zebra = true` brings the alternating row tint
 back on top of either.
 
+`elements.mermaid = false` leaves a ```mermaid fence as an ordinary code block.
+`mermaid.language_label = false` drops the dim header line above a drawn
+diagram. `mermaid.max_nodes` and `mermaid.max_edges` are guards: past either
+limit the fence renders as a code block instead, so one pathological diagram
+cannot stall a re-render on |:w|. Both must be positive integers; anything else
+warns and keeps the default. See |mdview-mermaid|.
+
 Under `marker_style = "block"` the layout is unchanged but `heading.bar`,
 `icons.bullets` and `tables.borders` are ignored: bar and bullet cells become
 background-coloured spaces and table columns are separated by padding alone.
@@ -295,8 +351,9 @@ VALIDATION                                            *mdview-config-validation*
   such as `marker_syle = "block"` or `elements.headins = false` warns instead
   of silently doing nothing;
 - a value of the wrong type warns and the default is kept;
-- a `split`, `marker_style`, `width`, `height` or `text_width` that is the
-  right type but out of range warns and falls back to its default.
+- a `split`, `marker_style`, `width`, `height`, `text_width`,
+  `mermaid.max_nodes` or `mermaid.max_edges` that is the right type but out of
+  range warns and falls back to its default.
 
 List-valued options -- currently only `icons.bullets` -- REPLACE the default
 instead of merging into it, because |vim.tbl_deep_extend()| merges lists
@@ -337,6 +394,12 @@ a colorscheme or |nvim_set_hl()|:
   MdviewTableHead           Table header cells (bold)
   MdviewTableBorder         Table grid: ┌ ┬ ┐ ├ ┼ ┤ └ ┴ ┘ ─ │
   MdviewTableSep            Table column separator (tables.borders = false)
+  MdviewMermaidBox          Mermaid node borders
+  MdviewMermaidLabel        Mermaid node label text
+  MdviewMermaidEdge         Mermaid edge lines and end markers
+  MdviewMermaidEdgeDim      Mermaid dotted edges (-.->)
+  MdviewMermaidEdgeStrong   Mermaid thick edges (==>)
+  MdviewMermaidEdgeLabel    Mermaid edge label text
 
 MdviewHeadingBold is a separate group because Neovim cannot attach extra
 attributes to a `default = true` link, and the level colour has to keep coming
@@ -440,5 +503,7 @@ Out of scope for now:
 - Opening links with |gx| from the preview
 - Footnotes
 - Rendered HTML blocks (currently shown as raw text)
+- Mermaid: `subgraph` containers, cycles, node shape differentiation, crossing
+  minimisation, `classDef` colours, and diagram types other than `flowchart`
 
 vim:tw=78:ts=8:noet:ft=help:norl:
