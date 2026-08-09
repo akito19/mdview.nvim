@@ -760,7 +760,13 @@ end
 
 --- Plan one channel: how many rows it needs, and which row each jog and each
 --- edge label goes in. Returns the channel height.
-local function plan_channel(segs, rule_w)
+---
+--- `drawn` is the per-draw set of edges whose label has already been placed. It
+--- is threaded in rather than flagged on the edge itself because the edge table
+--- belongs to the graph, and `M.draw` must leave the graph exactly as `M.parse`
+--- returned it -- a flag left behind there makes the second draw of one graph
+--- drop every label, and the routing rows that carry them with it.
+local function plan_channel(segs, rule_w, drawn)
   local jog_rows, lab_rows = {}, {}
   local ports = {}
   for _, seg in ipairs(segs) do
@@ -778,8 +784,8 @@ local function plan_channel(segs, rule_w)
         )
       end
       -- An edge's label is drawn once, on the first segment of its chain.
-      if seg.edge.label and not seg.edge.drawn then
-        seg.edge.drawn = true
+      if seg.edge.label and not drawn[seg.edge] then
+        drawn[seg.edge] = true
         seg.label = seg.edge.label
         seg.label_cols = text_cols(seg.label, rule_w)
         seg.label_col = label_col(seg.cx, seg.label_cols, ports)
@@ -846,7 +852,7 @@ local function draw_segment(cv, seg, rows, nrows, nl, down)
   end
 end
 
-local function layout_vertical(layers, nlayers, segments, flip, cv, rule_w)
+local function layout_vertical(layers, nlayers, segments, flip, cv, rule_w, drawn)
   local order = screen_order(nlayers, flip)
 
   -- X placement, layer by layer in dependency order so predecessors are always
@@ -926,7 +932,7 @@ local function layout_vertical(layers, nlayers, segments, flip, cv, rule_w)
   local channels = by_channel(segments, order, nlayers)
   local ch_h, ch_nl = {}, {}
   for k = 0, nlayers - 2 do
-    ch_h[k], ch_nl[k] = plan_channel(channels[k], rule_w)
+    ch_h[k], ch_nl[k] = plan_channel(channels[k], rule_w, drawn)
   end
 
   -- Y: layer bands separated by their channels. A dummy is stretched to the
@@ -996,7 +1002,7 @@ end
 --- swapping roles: jogs occupy columns, and an edge label is drawn ON its
 --- horizontal run (`──label──>`) rather than beside it, because a run of `─`
 --- has room for text where a run of `│` does not.
-local function plan_channel_h(segs, rule_w)
+local function plan_channel_h(segs, rule_w, drawn)
   local jog_cols, lab_slots = {}, {}
   local widest = 0
   for _, seg in ipairs(segs) do
@@ -1011,8 +1017,8 @@ local function plan_channel_h(segs, rule_w)
           { src = seg.cy, dst = seg.ty }
         )
       end
-      if seg.edge.label and not seg.edge.drawn then
-        seg.edge.drawn = true
+      if seg.edge.label and not drawn[seg.edge] then
+        drawn[seg.edge] = true
         seg.label = seg.edge.label
         seg.label_cols = text_cols(seg.label, rule_w)
         widest = math.max(widest, seg.label_cols)
@@ -1078,7 +1084,7 @@ local function draw_segment_h(cv, seg, cols, ncols, lab_w, widest, right)
   end
 end
 
-local function layout_horizontal(layers, nlayers, segments, flip, cv, rule_w)
+local function layout_horizontal(layers, nlayers, segments, flip, cv, rule_w, drawn)
   local order = screen_order(nlayers, flip)
 
   -- Every box in a layer takes the layer's widest width. In a horizontal
@@ -1163,7 +1169,7 @@ local function layout_horizontal(layers, nlayers, segments, flip, cv, rule_w)
   local channels = by_channel(segments, order, nlayers)
   local ch_w, ch_lab, ch_widest = {}, {}, {}
   for k = 0, nlayers - 2 do
-    ch_w[k], ch_lab[k], ch_widest[k] = plan_channel_h(channels[k], rule_w)
+    ch_w[k], ch_lab[k], ch_widest[k] = plan_channel_h(channels[k], rule_w, drawn)
   end
 
   -- X: layer bands separated by their channels.
@@ -1240,10 +1246,16 @@ function M.draw(graph, opts)
   local cv = canvas.new_canvas(rule_w)
   local vertical = graph.dir == "TB" or graph.dir == "BT"
   local flip = graph.dir == "BT" or graph.dir == "RL"
+  -- Which edges have had their label placed, for this draw only. An edge spans
+  -- several channels once it is split by dummies, and its label belongs on the
+  -- first segment alone; keeping that state here rather than on the edge is what
+  -- keeps `graph` identical to what `M.parse` returned, so drawing the same
+  -- graph twice draws the same diagram.
+  local drawn = {}
   if vertical then
-    layout_vertical(layers, nlayers, segments, flip, cv, rule_w)
+    layout_vertical(layers, nlayers, segments, flip, cv, rule_w, drawn)
   else
-    layout_horizontal(layers, nlayers, segments, flip, cv, rule_w)
+    layout_horizontal(layers, nlayers, segments, flip, cv, rule_w, drawn)
   end
 
   local lines, decorations = {}, {}

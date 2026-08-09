@@ -845,6 +845,27 @@ T["layout"]["a prefix shifts every line and every byte column"] = function()
   end
 end
 
+T["layout"]["drawing one parsed graph twice draws the same diagram"] = function()
+  -- `draw` is documented as pure, so the graph it is handed has to come back
+  -- untouched. It did not: the "this edge's label is already placed" flag lived
+  -- on the shared edge table, so a second draw skipped every label -- and the
+  -- routing rows that carry them, which changes the row count too.
+  --
+  -- Both label placers are covered: vertical puts the label beside the run, and
+  -- horizontal on it, and each used to set the flag.
+  for _, src in ipairs({
+    "flowchart TD\nA[Check] -->|ok| B[Done]\nA -->|no| C[Stop]",
+    "flowchart LR\nA[Check] -->|ok| B[Done]\nA -->|no| C[Stop]",
+  }) do
+    local graph = mermaid.parse(vim.split(src, "\n", { plain = true }))
+    local before = vim.inspect(graph)
+    local first = mermaid.draw(graph)
+    local second = mermaid.draw(graph)
+    eq({ src, second.lines }, { src, first.lines })
+    eq({ src, vim.inspect(graph) }, { src, before })
+  end
+end
+
 ---------------------------------------------------------------------------
 -- Fallback
 ---------------------------------------------------------------------------
