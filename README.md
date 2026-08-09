@@ -376,9 +376,9 @@ invisible marker would erase the hierarchy.
   and below the last — with a tinted+bold header row and `:---:` alignment
   honored. Never wrapped: a wide table scrolls
 - Horizontal rules: a blank line tinted across the full window width
-- Mermaid flowcharts: a ` ```mermaid ` fence inside the [supported
-  subset](#mermaid-diagrams) is laid out and drawn with the same box-drawing
-  glyph set as tables. Never wrapped: a wide diagram scrolls
+- Mermaid flowcharts and sequence diagrams: a ` ```mermaid ` fence inside the
+  [supported subset](#mermaid-diagrams) is laid out and drawn with the same
+  box-drawing glyph set as tables. Never wrapped: a wide diagram scrolls
 - Body text (paragraphs, list items, blockquote content, headings) is
   hard-wrapped to the preview's width, measured in display cells, with a hanging
   indent on continuation lines and inline highlight spans split across the
@@ -408,6 +408,8 @@ B --> C[Draw]                     └───┬───┘
 **Anything outside the supported subset falls back to an ordinary labelled code
 block** — no error, no half-drawn diagram. A wrong diagram is worse than no
 diagram, so every ambiguity resolves towards the fallback.
+
+### `flowchart` / `graph`
 
 | Supported | |
 |---|---|
@@ -440,6 +442,54 @@ circle, and adding `╭╮╰╯` for rounded corners would only solve a third o
 problem. Layout is deliberately deterministic — items are ordered by first
 appearance rather than by crossing minimisation — so the same source always
 renders the same way.
+
+### `sequenceDiagram`
+
+Participants are columns in source order, messages are rows in time order.
+
+```
+sequenceDiagram             ┌───────┐  ┌─────┐  ┌───────┐
+Alice->>Bob: ask            │ Alice │  │ Bob │  │ Carol │
+Bob->>Carol: check          └───┬───┘  └──┬──┘  └───┬───┘
+Carol-->>Alice: done            │         │         │
+                                ├ask─────>┤         │
+                                │         │         │
+                                │         ├check───>┤
+                                │         │         │
+                                ├<────────┼─────done┤
+                                │         │         │
+```
+
+| Supported | |
+|---|---|
+| Header | `sequenceDiagram`, alone on its line |
+| Participants | `participant A`, `participant A as Alice`, `participant A as "Alice"` |
+| Participant labels | `<br/>` line breaks, making a taller box |
+| Implicit participants | an id first seen in a message, in source order |
+| Messages | `->` `-->` `->>` `-->>` `-x` `--x` `-)` `--)`, one per line |
+| Message style | `--` is dashed and differs by **colour**, not by glyph |
+| End markers | `>` `<` for `->>`, `x` for `-x`, `)` `(` for the async `-)` |
+| Message text | `A->>B: text` — optional, quoted or bare, runs to end of line |
+| Ignored | `%%` comments, frontmatter, `%%{init}%%` |
+
+| Falls back to a code block | Why |
+|---|---|
+| `alt` `else` `opt` `loop` `par` `and` `critical` `option` `break` `rect` `end` | frames nest *and* span lifelines, so they change the layout materially — this diagram type's `subgraph` |
+| `Note left of` / `right of` / `over` | not implemented |
+| `activate` / `deactivate`, and `A->>+B` | an activation changes a lifeline's shape rather than decorating it |
+| `A->>A` (a self-message) | it needs a loop back onto one lifeline, a row shape this layout has not got |
+| `<<->>`, `<<-->>` | a source-end marker has nowhere to go but the lifeline junction |
+| `<br/>` in *message* text | the text is drawn on the single row of its arrow |
+| `autonumber`, `box`, `create`, `destroy`, `link`, `links` | not implemented |
+| `actor` | the stick figure is the whole difference from `participant`, so drawing one as the other would say something the source did not |
+| Ids outside `[A-Za-z0-9_]`, more than `max_nodes` participants or `max_edges` messages | as for a flowchart |
+
+`;` does **not** separate statements here: message text is free text and
+routinely contains one, and mermaid itself terminates on the newline.
+
+There are no bottom participant boxes. Mermaid repeats them; three rows and a
+duplicate of every label to restate what the top of the diagram already says is
+not worth it in a terminal.
 
 ## Development
 

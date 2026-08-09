@@ -215,12 +215,17 @@ MERMAID DIAGRAMS                                                *mdview-mermaid*
 
 A ```mermaid fence is laid out and drawn as a box-and-line diagram, in pure Lua
 with no external process, using the same box-drawing set as the table grid plus
-ASCII end markers (`v ^ < > o x`). Like a table it is never wrapped: a wide
+ASCII end markers (`v ^ < > o x ) (`). Like a table it is never wrapped: a wide
 diagram scrolls sideways.
+
+Two diagram types are drawn: `flowchart` (and its legacy spelling `graph`) and
+`sequenceDiagram`. Any other type falls back.
 
 Anything outside the supported subset falls back to an ordinary labelled code
 block -- no error and no half-drawn diagram. A wrong diagram is worse than no
 diagram, so every ambiguity resolves towards the fallback.
+
+FLOWCHARTS
 
 Supported:
 
@@ -258,6 +263,66 @@ verified-safe set out of pure-ASCII source (see |mdview-glyphs|).
 Layout is deterministic. Items are ordered within a layer by first appearance
 in the source rather than by crossing minimisation, so the same fence always
 renders identically -- which is what makes the golden tests meaningful.
+
+SEQUENCE DIAGRAMS
+
+Participants are columns in source order, messages are rows in time order: >
+
+    sequenceDiagram             ┌───────┐  ┌─────┐  ┌───────┐
+    Alice->>Bob: ask            │ Alice │  │ Bob │  │ Carol │
+    Bob->>Carol: check          └───┬───┘  └──┬──┘  └───┬───┘
+    Carol-->>Alice: done            │         │         │
+                                    ├ask─────>┤         │
+                                    │         │         │
+                                    │         ├check───>┤
+                                    │         │         │
+                                    ├<────────┼─────done┤
+                                    │         │         │
+<
+Supported:
+
+- `sequenceDiagram`, alone on its line, matched case-insensitively
+- `participant A`, `participant A as Alice`, `participant A as "Alice"`; an
+  alias is free text to the end of the line, and `<br/>` splits it into a
+  taller box
+- a participant first seen in a MESSAGE is registered implicitly; columns
+  follow first appearance either way, and a repeated declaration is
+  last-write-wins for its label
+- `->` `-->` `->>` `-->>` `-x` `--x` `-)` `--)`, one message per line. One dash
+  is solid and two are dashed; dashed differs by HIGHLIGHT GROUP, not by glyph,
+  since the glyph set has one line weight
+- the end marker is drawn in the run cell next to the target: `>` / `<` for
+  `->>`, `x` for `-x`, and `)` / `(` for the async `-)`. `->` and `-->` draw
+  none at all
+- `A->>B: text` -- the text part is optional, is unquoted and trimmed, and runs
+  to the end of the line. `;` does NOT separate statements here: message text
+  routinely contains one, and mermaid terminates on the newline
+- `%%` comments, YAML frontmatter and `%%{init: ...}%%` directives are skipped
+
+Falls back to a code block:
+
+- `alt`, `else`, `opt`, `loop`, `par`, `and`, `critical`, `option`, `break`,
+  `rect`, `end`: frames nest AND span lifelines, so they change the layout
+  materially rather than adding to it -- this diagram type's `subgraph`
+- `Note left of` / `right of` / `over`
+- `activate` / `deactivate`, and the `+` / `-` arrow suffix (`A->>+B`)
+- `A->>A`, a self-message: it needs a loop back onto one lifeline
+- `<<->>` and `<<-->>`, where a source-end marker would land on the lifeline
+  junction
+- `<br/>` inside MESSAGE text, which is drawn on the single row of its arrow
+- `autonumber`, `box`, `create`, `destroy`, `link`, `links`
+- `actor`: the stick figure is the whole difference from `participant`, so
+  drawing one as the other would say something the source did not
+- a participant id outside `[A-Za-z0-9_]`
+- more than `mermaid.max_nodes` participants or `mermaid.max_edges` messages
+
+`mermaid.max_nodes` and `mermaid.max_edges` are shared between the two diagram
+types: nodes and participants count against the first, edges and messages
+against the second. There are no options specific to sequence diagrams.
+
+There are no bottom participant boxes. Mermaid repeats them; three rows and a
+duplicate of every label to restate what the top of the diagram already says is
+not worth it in a terminal.
 
 ==============================================================================
 5. CONFIGURATION                                          *mdview-configuration*
@@ -334,8 +399,9 @@ back on top of either.
 `mermaid.language_label = false` drops the dim header line above a drawn
 diagram. `mermaid.max_nodes` and `mermaid.max_edges` are guards: past either
 limit the fence renders as a code block instead, so one pathological diagram
-cannot stall a re-render on |:w|. Both must be positive integers; anything else
-warns and keeps the default. See |mdview-mermaid|.
+cannot stall a re-render on |:w|. They count flowchart nodes and edges, and
+equally sequence-diagram participants and messages. Both must be positive
+integers; anything else warns and keeps the default. See |mdview-mermaid|.
 
 Under `marker_style = "block"` the layout is unchanged but `heading.bar`,
 `icons.bullets` and `tables.borders` are ignored: bar and bullet cells become
@@ -394,12 +460,17 @@ a colorscheme or |nvim_set_hl()|:
   MdviewTableHead           Table header cells (bold)
   MdviewTableBorder         Table grid: ┌ ┬ ┐ ├ ┼ ┤ └ ┴ ┘ ─ │
   MdviewTableSep            Table column separator (tables.borders = false)
-  MdviewMermaidBox          Mermaid node borders
-  MdviewMermaidLabel        Mermaid node label text
+  MdviewMermaidBox          Mermaid node borders, and sequence lifelines
+  MdviewMermaidLabel        Mermaid node and participant label text
   MdviewMermaidEdge         Mermaid edge lines and end markers
-  MdviewMermaidEdgeDim      Mermaid dotted edges (-.->)
+  MdviewMermaidEdgeDim      Mermaid dotted edges (-.->) and dashed messages
   MdviewMermaidEdgeStrong   Mermaid thick edges (==>)
-  MdviewMermaidEdgeLabel    Mermaid edge label text
+  MdviewMermaidEdgeLabel    Mermaid edge and message label text
+
+A sequence-diagram lifeline is part of its participant's structure, like a box
+border, so it takes MdviewMermaidBox rather than a group of its own. The first
+writer of a cell owns its colour, which then makes the ├ ┤ ┼ junctions where a
+message meets a lifeline border-coloured too.
 
 MdviewHeadingBold is a separate group because Neovim cannot attach extra
 attributes to a `default = true` link, and the level colour has to keep coming
@@ -503,7 +574,11 @@ Out of scope for now:
 - Opening links with |gx| from the preview
 - Footnotes
 - Rendered HTML blocks (currently shown as raw text)
-- Mermaid: `subgraph` containers, cycles, node shape differentiation, crossing
-  minimisation, `classDef` colours, and diagram types other than `flowchart`
+- Mermaid flowcharts: `subgraph` containers, cycles, node shape
+  differentiation, crossing minimisation, `classDef` colours
+- Mermaid sequence diagrams: `alt` / `opt` / `loop` / `par` / `critical`
+  frames, activations, self-messages, notes, `autonumber`, `box`, `create` /
+  `destroy`, actors, participant links
+- Diagram types other than `flowchart` and `sequenceDiagram`
 
 vim:tw=78:ts=8:noet:ft=help:norl:

@@ -161,3 +161,52 @@ shapes would be worse than none.
 **Rule extracted:** when a constraint looks like it rules a feature out, check
 whether it actually binds. And prefer a representation that cannot express the
 bug over a check that catches it.
+
+## 8. Mermaid sequence diagrams — a second type, and what it refused to reuse
+
+[Issue #3](https://github.com/akito19/mdview.nvim/issues/3) added
+`sequenceDiagram`. Details in [mermaid-sequence.md](mermaid-sequence.md).
+
+**The split came first, as its own branch.** `mermaid.lua` was 1551 lines
+structured around one diagram type. Splitting it into a package *while* adding
+the second type would have made the diff unreviewable and, worse, untestable:
+the refactor's only proof of correctness is the existing suite passing with no
+test file edited, and that proof does not exist once the same commit changes
+behaviour.
+
+**What did not carry over is the interesting part.** A sequence diagram has no
+ranks, no channels, no dummy nodes and no crossing question: participants are
+columns in source order, messages are rows in time order. The X sweep is one
+left-to-right pass, and it is exact rather than approximate because every
+constraint runs from a lower column index to a higher one — a longest-path solve
+with nothing to iterate. `greedy_slot`, the whole of flowchart channel routing,
+stayed where it was. What *did* carry over is `canvas.lua`, and it carried the
+`ambiwidth` answer with it for free.
+
+**Frames are deferred, and they are this type's `subgraph`.** `alt` / `opt` /
+`loop` / `par` / `critical` nest *and* span lifelines, so they change the layout
+materially rather than adding to it. Same call as decision 7's containers, same
+hard bail, and the fence stays the code block it already was.
+
+**No bottom participant boxes.** Mermaid repeats the boxes at the foot of the
+diagram. Three rows and a duplicate of every label to restate what the top of a
+diagram that fits on one screen already says is not a trade worth making in a
+terminal, where vertical space is the scarce axis.
+
+**Dashed is a colour, not a glyph** — `-->>` differs from `->>` by highlight
+group alone, exactly as `-.->` does in a flowchart. The glyph set has one line
+weight and decision 3's `cmap` finding still governs what may be added to it, so
+a second weight is not available at any price. The *markers* went the other way
+and stayed literal characters: `>` `x` and the async `)` `(` are all ASCII, so
+the distinction mermaid draws costs nothing to keep.
+
+**Stage 2 added no highlight group and no config key.** A lifeline is part of its
+participant's structure, like a box border, so it takes `MdviewMermaidBox` and
+first-writer-wins then makes every `├` / `┤` / `┼` junction border-coloured. And
+participants count against `max_nodes` while messages count against `max_edges`:
+the two guards already there do the same job, and a second pair would have been
+config surface with no user-visible difference.
+
+**Rule extracted:** a second instance of a thing is what tells you which parts of
+the first were general. Split before extending, and let the new type say what it
+does not need.

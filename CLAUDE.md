@@ -33,6 +33,7 @@ Manual check: `nvim -u tests/minit.lua README.md`, then `:MdView`.
 | `lua/mdview/mermaid/text.lua` | shared: trim, unquote, labels, the frontmatter/comment prelude |
 | `lua/mdview/mermaid/canvas.lua` | shared: the `─`-wide column grid, bitmask glyphs, emit |
 | `lua/mdview/mermaid/flowchart.lua` | the `flowchart` / `graph` subset: parse, layer, lay out, draw |
+| `lua/mdview/mermaid/sequence.lua` | the `sequenceDiagram` subset: parse, lay out, draw |
 | `lua/mdview/window.lua` | scratch buffer, split, sessions, extmarks |
 
 ## Invariants
