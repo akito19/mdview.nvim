@@ -458,6 +458,20 @@ Where this section and the sections above disagree, this section wins.
    indent straight in rather than shifting byte columns afterwards, so
    decoration offsets are computed once, where the string is built.
 
+9. **An empty canvas is a fallback, not a diagram.** `M.draw` returns `nil` when
+   the drawn result has no lines, so a *successful* parse with nothing in it
+   falls back like a bail does. A header alone (`flowchart TD`,
+   `sequenceDiagram`), or a header plus only recognised-and-skipped statements
+   (`classDef`, `style`), parses fine and lays out zero rows. The empty table it
+   used to return is truthy, so the renderer emitted the language label, looped
+   over no lines and dropped the fence body — the author's source vanished from
+   the preview the moment they saved a diagram they had only started writing.
+
+   The check sits at the dispatch point rather than inside each kind's `draw`:
+   it is a property of the drawn result, not of any one diagram type. The
+   renderer keeps its own `#diagram.lines > 0` guard as belt and braces, because
+   that is the branch which loses the text.
+
 ## Deliberately deferred
 
 Follow-up issues, not silent gaps: `subgraph` containers, cycles / back edges,

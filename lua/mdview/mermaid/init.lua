@@ -81,16 +81,31 @@ function M.parse(lines, opts)
   return kind.parse(body, opts)
 end
 
---- Lay out and draw a parsed diagram.
+--- Lay out and draw a parsed diagram, or `nil` when there is nothing to draw.
 ---
 --- Diagrams join tables, code blocks and rules in the never-wrapped set: they
 --- are sized by their content and scroll sideways, so no target width is
 --- consulted and a window resize cannot change one.
+---
+--- A parse can succeed and still yield an empty canvas -- `flowchart TD` with no
+--- statements under it, or with only `classDef` / `style` lines the parser
+--- recognises and skips; `sequenceDiagram` with no participants. That is the
+--- ordinary state of a diagram being typed out, and the caller must fall back to
+--- the code block rather than emit a header over zero lines, which would drop
+--- the author's source from the preview.
+---
+--- The check lives here, at the dispatch point, rather than in each kind's
+--- `draw`: it is a property of the drawn result, not of any one diagram type, so
+--- one guard covers both kinds today and any third kind added later.
 ---@param graph table from `M.parse`
 ---@param opts table|nil { prefix = "" } prepended to every line
----@return table { lines = string[], decorations = table[] }
+---@return table|nil { lines = string[], decorations = table[] }
 function M.draw(graph, opts)
-  return KINDS[graph.kind].draw(graph, opts)
+  local drawn = KINDS[graph.kind].draw(graph, opts)
+  if not drawn or #drawn.lines == 0 then
+    return nil
+  end
+  return drawn
 end
 
 --- Parse and draw, or `nil` if the fence is outside the supported subset.

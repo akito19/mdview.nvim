@@ -790,6 +790,16 @@ T["fallback"]["render returns nil for anything the parser bails on"] = function(
   end
 end
 
+T["fallback"]["render returns nil when a valid parse draws nothing"] = function()
+  -- Not a bail: a bare header parses, with zero participants and zero messages.
+  -- The empty canvas that follows is still no diagram, so `render` must return
+  -- the same `nil` a bail does and let the fence stay a code block -- otherwise
+  -- typing the header and saving makes the source vanish from the preview.
+  local lines = { "sequenceDiagram" }
+  eq(mermaid.parse(lines) ~= nil, true)
+  eq(mermaid.render(lines), nil)
+end
+
 T["fallback"]["the block marker style has no box drawing to fall back on"] = function()
   local src = vim.split(PAIR, "\n", { plain = true })
   eq(mermaid.render(src, { marker_style = "block" }), nil)
