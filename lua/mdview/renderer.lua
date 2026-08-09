@@ -764,12 +764,57 @@ function M.render(blocks, config, opts)
       return
     end
 
-    -- Resolve every cell to { text, spans } and compute display widths.
+    -- The grid is inherently O(rows x columns): every intersection needs a
+    -- padded cell, a junction and a rule segment whether or not a cell exists
+    -- there. `ncols` comes from the WIDEST row, so a single 800-cell row makes
+    -- every other row 800 columns wide too -- 14 KB of markdown then costs
+    -- hundreds of megabytes, on every save. Past the cap the table is emitted
+    -- as plain text instead, which costs only the cells that are really there.
+    --
+    -- 32 is far past anything a reader would write: at the minimum one cell per
+    -- column a 32-column grid is already ~130 cells wide, wider than a
+    -- full-screen preview, so no realistic table is affected by the bound.
+    local max_cols = tonumber(table_cfg.max_columns) or 32
+
+    -- Tables switched off, or wider than the cap: the source rows as text.
+    -- Nothing is padded out to `ncols` here -- a row contributes exactly the
+    -- cells it has, so the pathological table costs its real cell count rather
+    -- than rows x columns.
+    if not elements.tables or ncols > max_cols then
+      local function plain(cells)
+        local texts = {}
+        for i, segments in ipairs(cells) do
+          texts[i] = (seg_line(segments))
+        end
+        add_line(qp .. table.concat(texts, " | "))
+      end
+      plain(b.header)
+      for _, row in ipairs(b.rows) do
+        plain(row)
+      end
+      return
+    end
+
+    -- A cell that its row does not have renders as empty padding, so it needs
+    -- no `seg_line` (two tables and a concat) and no measurement -- one shared
+    -- immutable stand-in covers every absent cell in the table. Nothing below
+    -- writes through a resolved cell, so sharing is safe.
+    local EMPTY = { text = "", spans = {}, width = 0 }
+
+    --- Resolve every cell to { text, spans, width }. The width is measured here
+    --- once and read back by both the column-width pass and `content_line`;
+    --- measuring is a Lua->vimscript crossing, so doing it twice per cell was
+    --- half the cost of a wide table.
     local function resolve(cells)
       local out = {}
       for i = 1, ncols do
-        local text, spans = seg_line(cells[i] or {})
-        out[i] = { text = text, spans = spans }
+        local segments = cells[i]
+        if segments == nil then
+          out[i] = EMPTY
+        else
+          local text, spans = seg_line(segments)
+          out[i] = { text = text, spans = spans, width = displaywidth(text) }
+        end
       end
       return out
     end
@@ -779,26 +824,15 @@ function M.render(blocks, config, opts)
       rows[i] = resolve(row)
     end
 
-    if not elements.tables then
-      local function plain(cells)
-        local texts = {}
-        for i = 1, ncols do
-          texts[i] = cells[i].text
-        end
-        add_line(qp .. table.concat(texts, " | "))
-      end
-      plain(header)
-      for _, row in ipairs(rows) do
-        plain(row)
-      end
-      return
-    end
-
     local widths = {}
     for i = 1, ncols do
-      widths[i] = math.max(1, displaywidth(header[i].text))
-      for _, row in ipairs(rows) do
-        widths[i] = math.max(widths[i], displaywidth(row[i].text))
+      widths[i] = math.max(1, header[i].width)
+    end
+    for _, row in ipairs(rows) do
+      for i = 1, ncols do
+        if row[i].width > widths[i] then
+          widths[i] = row[i].width
+        end
       end
     end
 
@@ -846,8 +880,9 @@ function M.render(blocks, config, opts)
         col = col + #vert + pad_cell
       end
       for i = 1, ncols do
-        local text = cells[i].text
-        local pad = widths[i] - displaywidth(text)
+        local cell = cells[i]
+        local text = cell.text
+        local pad = widths[i] - cell.width
         local align = b.align and b.align[i] or "none"
         local left_pad, right_pad
         if align == "right" then

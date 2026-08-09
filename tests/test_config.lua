@@ -239,4 +239,37 @@ T["mermaid"]["a valid limit is kept"] = function()
   eq(get("mermaid.max_edges"), 120)
 end
 
+T["tables"] = MiniTest.new_set()
+
+T["tables"]["the column cap defaults to 32 without setup()"] = function()
+  eq(get("tables.max_columns"), 32)
+  eq(#notes(), 0)
+end
+
+T["tables"]["a non-positive column cap warns and keeps the default"] = function()
+  -- Zero would send every table down the plain-text path, a confusing way to
+  -- spell `elements.tables = false`.
+  setup([[{ tables = { max_columns = 0 } }]])
+  warned(only_note(), "invalid `tables.max_columns`")
+  eq(get("tables.max_columns"), 32)
+end
+
+T["tables"]["a fractional column cap warns and keeps the default"] = function()
+  setup([[{ tables = { max_columns = 8.5 } }]])
+  warned(only_note(), "invalid `tables.max_columns`")
+  eq(get("tables.max_columns"), 32)
+end
+
+T["tables"]["a wrong-typed column cap is caught by the shared validator"] = function()
+  setup([[{ tables = { max_columns = "wide" } }]])
+  warned(only_note(), "option `tables.max_columns` expects number, got string")
+  eq(get("tables.max_columns"), 32)
+end
+
+T["tables"]["a valid column cap is kept"] = function()
+  setup([[{ tables = { max_columns = 8 } }]])
+  eq(get("tables.max_columns"), 8)
+  eq(get("tables.borders"), true)
+end
+
 return T

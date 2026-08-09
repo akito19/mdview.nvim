@@ -809,6 +809,99 @@ T["tables"]["a table far wider than the target width is never wrapped"] = functi
   end
 end
 
+--- An `n`-column table: header plus one full body row, both filled with `c1..cn`.
+local function wide_table(n)
+  local header, row, align = {}, {}, {}
+  for i = 1, n do
+    header[i] = { { text = "h" .. i } }
+    row[i] = { { text = "c" .. i } }
+    align[i] = "none"
+  end
+  return { { type = "table", header = header, align = align, rows = { row } } }
+end
+
+T["tables"]["a table at the column cap still gets the grid"] = function()
+  local cap = config.defaults.tables.max_columns
+  local res = render(wide_table(cap))
+  eq(#res.lines, 5) -- top rule, header, mid rule, row, bottom rule
+  eq(res.lines[1]:sub(1, #"  ┌"), "  ┌")
+  -- one `┬` per column boundary, i.e. cap - 1 of them
+  local _, junctions = res.lines[1]:gsub("┬", "")
+  eq(junctions, cap - 1)
+end
+
+T["tables"]["a table past the column cap falls back to plain text"] = function()
+  -- The grid is O(rows x columns) at every intersection and the column count
+  -- comes from the widest row, so it has to be bounded somewhere.
+  local cap = config.defaults.tables.max_columns
+  local res = render(wide_table(cap + 1))
+  eq(#res.lines, 2) -- header row, body row -- no rules, no verticals
+  eq(res.lines[1]:find("┌", 1, true), nil)
+  eq(res.lines[1]:find("│", 1, true), nil)
+  eq(res.lines[1]:sub(1, #"h1 | h2"), "h1 | h2")
+  eq(res.lines[2]:sub(1, #"c1 | c2"), "c1 | c2")
+end
+
+T["tables"]["the column cap is configurable"] = function()
+  local cfg = cfg_copy()
+  cfg.tables.max_columns = 2
+  eq(#render(wide_table(2), cfg).lines, 5) -- still a grid
+  eq(render(wide_table(3), cfg).lines, { "h1 | h2 | h3", "c1 | c2 | c3" })
+end
+
+T["tables"]["a sparse table pads the rows that are short"] = function()
+  -- One wide row plus several one-cell rows: `ncols` comes from the wide row,
+  -- so every other row is mostly cells that do not exist. They render as
+  -- padding -- and are not measured or resolved on the way there.
+  local res = render({
+    {
+      type = "table",
+      header = { { { text = "a" } } },
+      align = { "none", "none", "none" },
+      rows = {
+        { { { text = "wide" } }, { { text = "row" } }, { { text = "here" } } },
+        { { { text = "x" } } },
+        { { { text = "yy" } } },
+      },
+    },
+  })
+  eq(res.lines, {
+    "  ┌──────┬─────┬──────┐",
+    "  │ a    │     │      │",
+    "  ├──────┼─────┼──────┤",
+    "  │ wide │ row │ here │",
+    "  ├──────┼─────┼──────┤",
+    "  │ x    │     │      │",
+    "  ├──────┼─────┼──────┤",
+    "  │ yy   │     │      │",
+    "  └──────┴─────┴──────┘",
+  })
+  -- and every line is exactly as wide as the rules, under either 'ambiwidth'
+  for _, line in ipairs(res.lines) do
+    eq({ line, vim.fn.strdisplaywidth(line) }, { line, vim.fn.strdisplaywidth(res.lines[1]) })
+  end
+end
+
+T["tables"]["a sparse table lines up under 'ambiwidth' = double"] = function()
+  with_ambiwidth_double(function()
+    local res = render({
+      {
+        type = "table",
+        header = { { { text = "±" } } },
+        align = { "none", "none" },
+        rows = {
+          { { { text = "α→" } }, { { text = "°" } } },
+          { { { text = "·" } } },
+        },
+      },
+    })
+    local width = vim.fn.strdisplaywidth(res.lines[1])
+    for _, line in ipairs(res.lines) do
+      eq({ line, vim.fn.strdisplaywidth(line) }, { line, width })
+    end
+  end)
+end
+
 T["tables"]["disabled tables render plain rows"] = function()
   local cfg = cfg_copy()
   cfg.elements.tables = false
@@ -816,6 +909,23 @@ T["tables"]["disabled tables render plain rows"] = function()
     { type = "table", header = { { { text = "h" } } }, align = { "none" }, rows = { { { { text = "a" } } } } },
   }, cfg)
   eq(res.lines, { "h", "a" })
+end
+
+T["tables"]["plain rows are not padded out to the widest row"] = function()
+  -- Plain text is the source rows as written: a short row emits the cells it
+  -- has rather than trailing ` | ` for columns that do not exist. That is also
+  -- what keeps the over-cap fallback linear in real cells.
+  local cfg = cfg_copy()
+  cfg.elements.tables = false
+  local res = render({
+    {
+      type = "table",
+      header = { { { text = "h1" } }, { { text = "h2" } } },
+      align = { "none", "none" },
+      rows = { { { { text = "a" } }, { { text = "b" } } }, { { { text = "c" } } } },
+    },
+  }, cfg)
+  eq(res.lines, { "h1 | h2", "a | b", "c" })
 end
 
 T["links"] = MiniTest.new_set()

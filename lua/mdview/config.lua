@@ -72,6 +72,13 @@ M.defaults = {
     -- tile whatever the font covers. `false` falls back to
     -- `│` column separators with no horizontal rules.
     zebra = false, -- redundant once every row is ruled; `true` restores it
+    -- The grid costs one padded cell, junction and rule segment per
+    -- intersection, and `ncols` comes from the WIDEST row -- so one 800-cell
+    -- row makes every other row 800 columns wide too. Past this many columns
+    -- the table renders as plain text instead. 32 is far past anything
+    -- readable: at one cell per column a 32-column grid is already ~130 cells
+    -- wide, wider than a full-screen preview.
+    max_columns = 32,
   },
   highlights = {
     blend = true, -- compute background groups by blending into Normal.bg
@@ -208,6 +215,19 @@ function M.setup(opts)
       warn("invalid `mermaid.%s` value %s (expected a positive integer), using %s", key, tostring(v), tostring(M.defaults.mermaid[key]))
       merged.mermaid[key] = M.defaults.mermaid[key]
     end
+  end
+
+  -- Same guard, same reasoning: zero or fewer columns would send every table
+  -- down the plain-text path, a confusing way to spell `elements.tables =
+  -- false`. `validate` has already rejected non-numbers.
+  local mc = merged.tables.max_columns
+  if mc ~= mc or mc < 1 or mc ~= math.floor(mc) then
+    warn(
+      "invalid `tables.max_columns` value %s (expected a positive integer), using %s",
+      tostring(mc),
+      tostring(M.defaults.tables.max_columns)
+    )
+    merged.tables.max_columns = M.defaults.tables.max_columns
   end
 
   -- The renderer indexes `bullets` by depth and falls back to "-" on a miss, so
