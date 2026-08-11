@@ -438,10 +438,16 @@ diagram, so every ambiguity resolves towards the fallback.
 | Cycles | the layout is layered and DAG-only |
 | `<-->` `o--o` `x--x` | a source-end marker collides with the box border, and drawing them one-directional would be wrong |
 | `<br/>` in an *edge* label | edge labels occupy a single row |
+| A labelled edge whose source fans out **and** whose target fans in | neither end of it is unshared, so the label cannot be attached to one branch |
 | Node ids outside `[A-Za-z0-9_]` | mermaid documents no id grammar, so the conservative class is the only defensible one |
 | `@{ shape: … }`, edge ids, markdown-string labels | not implemented |
 | More than `max_nodes` / `max_edges` | a guard, so one pathological fence cannot stall a `:w` |
 | `marker_style = "block"` | a diagram is nothing but box drawing |
+
+An edge label is drawn on whichever end of its edge belongs to that edge alone —
+beside the run leaving the source, or, when the source fans out to several
+targets, on the branch after the split. A label the reader could not attach to
+one edge would be a wrong diagram, so the ambiguous case falls back instead.
 
 Numeric entity codes (`#35;`, `#9829;`) are left literal rather than decoded:
 decoding one would have the renderer synthesise a glyph outside the verified-safe

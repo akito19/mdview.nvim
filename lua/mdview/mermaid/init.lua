@@ -87,16 +87,25 @@ end
 --- are sized by their content and scroll sideways, so no target width is
 --- consulted and a window resize cannot change one.
 ---
---- A parse can succeed and still yield an empty canvas -- `flowchart TD` with no
---- statements under it, or with only `classDef` / `style` lines the parser
---- recognises and skips; `sequenceDiagram` with no participants. That is the
---- ordinary state of a diagram being typed out, and the caller must fall back to
---- the code block rather than emit a header over zero lines, which would drop
---- the author's source from the preview.
+--- A parse can succeed and the draw still yield nothing, in two ways.
 ---
---- The check lives here, at the dispatch point, rather than in each kind's
---- `draw`: it is a property of the drawn result, not of any one diagram type, so
---- one guard covers both kinds today and any third kind added later.
+--- An EMPTY CANVAS: `flowchart TD` with no statements under it, or with only
+--- `classDef` / `style` lines the parser recognises and skips;
+--- `sequenceDiagram` with no participants. That is the ordinary state of a
+--- diagram being typed out, and the caller must fall back to the code block
+--- rather than emit a header over zero lines, which would drop the author's
+--- source from the preview.
+---
+--- A LAYOUT-TIME BAIL: the kind's own `draw` returns nil because something only
+--- the layout can see leaves no correct picture to draw -- today, a flowchart
+--- edge label whose source fans out and whose target fans in, which has no run
+--- it could be attached to unambiguously. The source is well formed, so the
+--- refusal cannot happen any earlier than here.
+---
+--- Both reach the caller as the same `nil` a parse bail does. The empty-canvas
+--- check lives here, at the dispatch point, rather than in each kind's `draw`:
+--- it is a property of the drawn result, not of any one diagram type, so one
+--- guard covers both kinds today and any third kind added later.
 ---@param graph table from `M.parse`
 ---@param opts table|nil { prefix = "" } prepended to every line
 ---@return table|nil { lines = string[], decorations = table[] }

@@ -766,31 +766,93 @@ local function port_col(it)
   return it.x + math.floor(it.w / 2)
 end
 
---- Decide where the edge label sits relative to its vertical run. Preference
---- is the right of the line; the left is tried when a port column of the same
---- channel would be underneath. If both collide the right is used anyway --
---- the text then interrupts a line, which is cosmetic, where dropping the
---- label or bailing the diagram would cost real information.
-local function label_col(cx, cols, ports)
+--- Decide where the edge label sits relative to the vertical run it is anchored
+--- to. Preference is the right of the line; the left is tried when a port column
+--- of the same band would be underneath. If both collide the right is used
+--- anyway -- the text then interrupts a line, which is cosmetic, where dropping
+--- the label or bailing the diagram would cost real information.
+---
+--- `anchor` is the column of the run the label belongs to -- the SOURCE port for
+--- a label in the pre band, the TARGET port for one in the post band -- and
+--- `ports` holds the columns occupied in that band alone. Passing the other
+--- band's columns too would push a label aside for a run that is nowhere near
+--- it.
+local function label_col(anchor, cols, ports)
   local function clear(a, b)
     for _, p in ipairs(ports) do
-      if p >= a and p <= b and p ~= cx then
+      if p >= a and p <= b and p ~= anchor then
         return false
       end
     end
     return true
   end
-  if clear(cx + 1, cx + cols) then
-    return cx + 1
+  if clear(anchor + 1, anchor + cols) then
+    return anchor + 1
   end
-  if cx - cols >= 0 and clear(cx - cols, cx - 1) then
-    return cx - cols
+  if anchor - cols >= 0 and clear(anchor - cols, anchor - 1) then
+    return anchor - cols
   end
-  return cx + 1
+  return anchor + 1
+end
+
+--- How many non-invisible segments of this channel leave each source item and
+--- arrive at each target item. Keyed on the ITEM, not on its port coordinate:
+--- two boxes can share a column by coincidence of layout without sharing a port.
+---
+--- An invisible (`~~~`) segment draws nothing, so it cannot make a label
+--- ambiguous and must not count towards either total.
+local function share_counts(segs)
+  local from_n, to_n = {}, {}
+  for _, seg in ipairs(segs) do
+    if seg.edge.style ~= "invisible" then
+      from_n[seg.from] = (from_n[seg.from] or 0) + 1
+      to_n[seg.to] = (to_n[seg.to] or 0) + 1
+    end
+  end
+  return from_n, to_n
+end
+
+--- Which end of a labelled segment the label may be attributed to.
+--- Returns `"pre"`, `"post"`, or nil meaning the whole diagram must bail.
+---
+--- A segment's run sits on its source coordinate up to and including its jog,
+--- and on its target coordinate after it. So a label in the PRE band names the
+--- source-side run and a label in the POST band names the target-side run --
+--- after every jog in the channel, hence after any split.
+---
+--- | source shared | target shared | anchor |
+--- |---|---|---|
+--- | no  | either | pre: the source run is this edge's alone |
+--- | yes | no     | post: the target run is this edge's alone |
+--- | yes | yes    | bail: no run in this channel belongs to this edge alone |
+---
+--- Fan-in therefore keeps the source anchor, which is right: `B -->|yes| D` and
+--- `C -->|no| D` leave different boxes and meet at one, so the source side is
+--- where they are still distinguishable.
+---
+--- The both-shared case (`A -->|x| B` twice over, or a fan-out crossing a
+--- fan-in) has no attributable placement at all, and a label the reader cannot
+--- attach to an edge is a wrong diagram rather than a missing one. Per the
+--- subset's own rule the fence falls back to the code block instead.
+---
+--- The post band relies on one guarantee: targets in a layer have distinct
+--- ports, so of the segments sharing a source port at most one can run straight
+--- and the rest must jog. In the post band every segment is therefore already on
+--- its own target coordinate.
+local function label_band(seg, from_n, to_n)
+  if (from_n[seg.from] or 0) <= 1 then
+    return "pre"
+  end
+  if (to_n[seg.to] or 0) <= 1 then
+    return "post"
+  end
+  return nil
 end
 
 --- Plan one channel: how many rows it needs, and which row each jog and each
---- edge label goes in. Returns the channel height.
+--- edge label goes in. Returns `{ size, pre, jogs, post }` -- the channel height
+--- and the row counts of its three bands, in screen order away from the source
+--- layer -- or nil when a label in it cannot be attributed to one edge.
 ---
 --- `drawn` is the per-draw set of edges whose label has already been placed. It
 --- is threaded in rather than flagged on the edge itself because the edge table
@@ -798,13 +860,17 @@ end
 --- returned it -- a flag left behind there makes the second draw of one graph
 --- drop every label, and the routing rows that carry them with it.
 local function plan_channel(segs, rule_w, drawn)
-  local jog_rows, lab_rows = {}, {}
-  local ports = {}
+  local jog_rows = {}
+  local rows = { pre = {}, post = {} }
+  -- Band-specific occupancy: the pre band holds the source-side runs, the post
+  -- band the target-side ones.
+  local ports = { pre = {}, post = {} }
   for _, seg in ipairs(segs) do
     seg.cx, seg.tx = port_col(seg.from), port_col(seg.to)
-    ports[#ports + 1] = seg.cx
-    ports[#ports + 1] = seg.tx
+    table.insert(ports.pre, seg.cx)
+    table.insert(ports.post, seg.tx)
   end
+  local from_n, to_n = share_counts(segs)
   for _, seg in ipairs(segs) do
     if seg.edge.style ~= "invisible" then
       if seg.cx ~= seg.tx then
@@ -817,26 +883,39 @@ local function plan_channel(segs, rule_w, drawn)
       -- An edge's label is drawn once, on the first segment of its chain.
       if seg.edge.label and not drawn[seg.edge] then
         drawn[seg.edge] = true
+        local band = label_band(seg, from_n, to_n)
+        if not band then
+          return nil
+        end
         seg.label = seg.edge.label
+        seg.label_band = band
         seg.label_cols = text_cols(seg.label, rule_w)
-        seg.label_col = label_col(seg.cx, seg.label_cols, ports)
-        seg.label_row =
-          greedy_slot(lab_rows, { seg.label_col, seg.label_col + seg.label_cols - 1 })
+        seg.label_col =
+          label_col(band == "pre" and seg.cx or seg.tx, seg.label_cols, ports[band])
+        -- Only the slot WITHIN the band is known here; the band's own offset
+        -- depends on how many rows the pre band ends up with, which is not
+        -- settled until the whole channel is planned.
+        seg.label_slot =
+          greedy_slot(rows[band], { seg.label_col, seg.label_col + seg.label_cols - 1 })
       end
     end
   end
-  local nl, nj = slot_count(lab_rows), slot_count(jog_rows)
-  return nl + nj + 1, nl, nj
+  local npre, nj, npost = slot_count(rows.pre), slot_count(jog_rows), slot_count(rows.post)
+  return { size = npre + nj + npost + 1, pre = npre, jogs = nj, post = npost }
 end
 
 --- Route one segment through its channel and draw it.
 ---
 --- `rows[i]` counts AWAY from the from-box, so the same code serves TB and BT:
---- label rows first, then jog rows, then the end-marker row nearest the target.
-local function draw_segment(cv, seg, rows, nrows, nl, down)
+--- pre-band label rows first, then jog rows, then the post-band label rows, then
+--- the end-marker row nearest the target. The line is on the segment's source
+--- column for everything up to and including its jog and on its target column
+--- after it, which is exactly what makes the post band the attributable side of
+--- a fan-out.
+local function draw_segment(cv, seg, rows, plan, down)
   local group = EDGE_GROUP[seg.edge.style] or EDGE_GROUP.solid
-  -- `rows` is 0-indexed, so its length has to be passed rather than measured.
-  local last = nrows - 1
+  -- `rows` is 0-indexed, so its length comes from the plan rather than from `#`.
+  local last = plan.size - 1
   local path = {}
   local function push(row, col)
     path[#path + 1] = { row = row, col = col }
@@ -844,7 +923,7 @@ local function draw_segment(cv, seg, rows, nrows, nl, down)
 
   push(down and (seg.from.y + seg.from.h - 1) or seg.from.y, seg.cx)
   if seg.jog then
-    local j = nl + seg.jog
+    local j = plan.pre + seg.jog
     for i = 0, j do
       push(rows[i], seg.cx)
     end
@@ -879,7 +958,9 @@ local function draw_segment(cv, seg, rows, nrows, nl, down)
     end
   end
   if seg.label then
-    cv_span(cv, rows[seg.label_row], seg.label_col, seg.label, seg.label_cols, GROUP_EDGE_LABEL)
+    local row = seg.label_band == "post" and (plan.pre + plan.jogs + seg.label_slot)
+      or seg.label_slot
+    cv_span(cv, rows[row], seg.label_col, seg.label, seg.label_cols, GROUP_EDGE_LABEL)
   end
 end
 
@@ -961,9 +1042,16 @@ local function layout_vertical(layers, nlayers, segments, flip, cv, rule_w, draw
   end
 
   local channels = by_channel(segments, order, nlayers)
-  local ch_h, ch_nl = {}, {}
+  local plans = {}
   for k = 0, nlayers - 2 do
-    ch_h[k], ch_nl[k] = plan_channel(channels[k], rule_w, drawn)
+    local plan = plan_channel(channels[k], rule_w, drawn)
+    -- An unattributable edge label bails the whole diagram, and it bails here
+    -- rather than in `M.parse`: the source is well formed, it is the layout that
+    -- has nowhere to put the label. Nothing has been drawn yet.
+    if not plan then
+      return false
+    end
+    plans[k] = plan
   end
 
   -- Y: layer bands separated by their channels. A dummy is stretched to the
@@ -984,7 +1072,7 @@ local function layout_vertical(layers, nlayers, segments, flip, cv, rule_w, draw
     y = y + band
     if k < nlayers - 1 then
       ch_y[k] = y
-      y = y + ch_h[k]
+      y = y + plans[k].size
     end
   end
 
@@ -1005,16 +1093,18 @@ local function layout_vertical(layers, nlayers, segments, flip, cv, rule_w, draw
 
   local down = not flip
   for k = 0, nlayers - 2 do
+    local plan = plans[k]
     local rows = {}
-    for i = 0, ch_h[k] - 1 do
-      rows[i] = down and (ch_y[k] + i) or (ch_y[k] + ch_h[k] - 1 - i)
+    for i = 0, plan.size - 1 do
+      rows[i] = down and (ch_y[k] + i) or (ch_y[k] + plan.size - 1 - i)
     end
     for _, seg in ipairs(channels[k]) do
       if seg.edge.style ~= "invisible" then
-        draw_segment(cv, seg, rows, ch_h[k], ch_nl[k], down)
+        draw_segment(cv, seg, rows, plan, down)
       end
     end
   end
+  return true
 end
 
 ---------------------------------------------------------------------------
@@ -1033,12 +1123,20 @@ end
 --- swapping roles: jogs occupy columns, and an edge label is drawn ON its
 --- horizontal run (`──label──>`) rather than beside it, because a run of `─`
 --- has room for text where a run of `│` does not.
+---
+--- The two label bands are the same idea as the vertical planner's, transposed:
+--- a pre-band label sits on the source row before the jog columns, a post-band
+--- one on the target row after them. Returns `{ size, pre, jogs, post,
+--- widest_pre, widest_post }` -- `pre` and `post` in COLUMNS, since a horizontal
+--- band is as wide as the labels in it -- or nil to bail the diagram.
 local function plan_channel_h(segs, rule_w, drawn)
-  local jog_cols, lab_slots = {}, {}
-  local widest = 0
+  local jog_cols = {}
+  local slots = { pre = {}, post = {} }
+  local widest = { pre = 0, post = 0 }
   for _, seg in ipairs(segs) do
     seg.cy, seg.ty = port_row(seg.from), port_row(seg.to)
   end
+  local from_n, to_n = share_counts(segs)
   for _, seg in ipairs(segs) do
     if seg.edge.style ~= "invisible" then
       if seg.cy ~= seg.ty then
@@ -1050,32 +1148,50 @@ local function plan_channel_h(segs, rule_w, drawn)
       end
       if seg.edge.label and not drawn[seg.edge] then
         drawn[seg.edge] = true
+        local band = label_band(seg, from_n, to_n)
+        if not band then
+          return nil
+        end
         seg.label = seg.edge.label
+        seg.label_band = band
         seg.label_cols = text_cols(seg.label, rule_w)
-        widest = math.max(widest, seg.label_cols)
-        -- Labels share a slot only when they sit on different rows.
-        seg.label_slot = greedy_slot(lab_slots, { seg.cy, seg.cy })
+        widest[band] = math.max(widest[band], seg.label_cols)
+        -- Labels share a slot only when they sit on different rows -- keyed on
+        -- the row the label is actually drawn at, which is the target row in the
+        -- post band. Branch labels of a fan-out therefore all take slot 0 and
+        -- the band stays one label wide.
+        seg.label_slot =
+          greedy_slot(slots[band], band == "pre" and { seg.cy, seg.cy } or { seg.ty, seg.ty })
       end
     end
   end
-  local nslots, nj = slot_count(lab_slots), slot_count(jog_cols)
-  local lab_w = nslots > 0 and nslots * (widest + 1) or 0
+  local nj = slot_count(jog_cols)
+  local npre, npost = slot_count(slots.pre), slot_count(slots.post)
+  local pre_w = npre > 0 and npre * (widest.pre + 1) or 0
+  local post_w = npost > 0 and npost * (widest.post + 1) or 0
   -- At least three columns even when only the marker needs one: a bare
   -- `├>┤` between adjacent boxes reads as a typo rather than an arrow, and the
   -- spare columns simply lengthen the run the marker sits at the end of.
-  return math.max(3, lab_w + nj + 1), lab_w, widest, nj
+  return {
+    size = math.max(3, pre_w + nj + post_w + 1),
+    pre = pre_w,
+    jogs = nj,
+    post = post_w,
+    widest_pre = widest.pre,
+    widest_post = widest.post,
+  }
 end
 
-local function draw_segment_h(cv, seg, cols, ncols, lab_w, widest, right)
+local function draw_segment_h(cv, seg, cols, plan, right)
   local group = EDGE_GROUP[seg.edge.style] or EDGE_GROUP.solid
-  local last = ncols - 1
+  local last = plan.size - 1
   local path = {}
   local function push(row, col)
     path[#path + 1] = { row = row, col = col }
   end
 
   push(seg.cy, right and (seg.from.x + seg.from.w - 1) or seg.from.x)
-  local j = seg.jog and (lab_w + seg.jog) or last
+  local j = seg.jog and (plan.pre + seg.jog) or last
   for i = 0, j do
     push(seg.cy, cols[i])
   end
@@ -1104,10 +1220,16 @@ local function draw_segment_h(cv, seg, cols, ncols, lab_w, widest, right)
     end
   end
   if seg.label then
+    -- Label first, then the separating column, in both bands: a post-anchored
+    -- branch reads `┌yes─>┤ Left │`, the same shape as the pre-anchored
+    -- `├ok─>┤ Done │`.
+    local post = seg.label_band == "post"
+    local base = post and (plan.pre + plan.jogs) or 0
+    local width = post and plan.widest_post or plan.widest_pre
     cv_span(
       cv,
-      seg.cy,
-      cols[seg.label_slot * (widest + 1)],
+      post and seg.ty or seg.cy,
+      cols[base + seg.label_slot * (width + 1)],
       seg.label,
       seg.label_cols,
       GROUP_EDGE_LABEL
@@ -1198,9 +1320,15 @@ local function layout_horizontal(layers, nlayers, segments, flip, cv, rule_w, dr
   end
 
   local channels = by_channel(segments, order, nlayers)
-  local ch_w, ch_lab, ch_widest = {}, {}, {}
+  local plans = {}
   for k = 0, nlayers - 2 do
-    ch_w[k], ch_lab[k], ch_widest[k] = plan_channel_h(channels[k], rule_w, drawn)
+    local plan = plan_channel_h(channels[k], rule_w, drawn)
+    -- Same bail as the vertical planner: a label with no attributable run
+    -- takes the whole diagram back to the code block.
+    if not plan then
+      return false
+    end
+    plans[k] = plan
   end
 
   -- X: layer bands separated by their channels.
@@ -1220,7 +1348,7 @@ local function layout_horizontal(layers, nlayers, segments, flip, cv, rule_w, dr
     x = x + band
     if k < nlayers - 1 then
       ch_x[k] = x
-      x = x + ch_w[k]
+      x = x + plans[k].size
     end
   end
 
@@ -1241,30 +1369,38 @@ local function layout_horizontal(layers, nlayers, segments, flip, cv, rule_w, dr
 
   local right = not flip
   for k = 0, nlayers - 2 do
+    local plan = plans[k]
     local cols = {}
-    for i = 0, ch_w[k] - 1 do
-      cols[i] = right and (ch_x[k] + i) or (ch_x[k] + ch_w[k] - 1 - i)
+    for i = 0, plan.size - 1 do
+      cols[i] = right and (ch_x[k] + i) or (ch_x[k] + plan.size - 1 - i)
     end
     for _, seg in ipairs(channels[k]) do
       if seg.edge.style ~= "invisible" then
-        draw_segment_h(cv, seg, cols, ch_w[k], ch_lab[k], ch_widest[k], right)
+        draw_segment_h(cv, seg, cols, plan, right)
       end
     end
   end
+  return true
 end
 
 ---------------------------------------------------------------------------
 -- Draw entry point
 ---------------------------------------------------------------------------
 
---- Lay out and draw a parsed flowchart.
+--- Lay out and draw a parsed flowchart, or nil when the layout has to bail.
 ---
 --- Diagrams join tables, code blocks and rules in the never-wrapped set: they
 --- are sized by their content and scroll sideways, so no target width is
 --- consulted and a window resize cannot change one.
+---
+--- Not every bail is a parse bail. An edge label whose source fans out AND whose
+--- target fans in has no run in its channel that belongs to it alone, so there
+--- is nowhere to draw it that a reader could attribute -- and that is only
+--- knowable once the channel is planned. The source is well formed, so `M.parse`
+--- succeeds and the refusal happens here, the same shape as an empty canvas.
 ---@param graph table from `M.parse`
 ---@param opts table|nil { prefix = "" } prepended to every line
----@return table { lines = string[], decorations = table[] }
+---@return table|nil { lines = string[], decorations = table[] }
 function M.draw(graph, opts)
   opts = opts or {}
   local prefix = opts.prefix or ""
@@ -1283,10 +1419,14 @@ function M.draw(graph, opts)
   -- keeps `graph` identical to what `M.parse` returned, so drawing the same
   -- graph twice draws the same diagram.
   local drawn = {}
+  local ok
   if vertical then
-    layout_vertical(layers, nlayers, segments, flip, cv, rule_w, drawn)
+    ok = layout_vertical(layers, nlayers, segments, flip, cv, rule_w, drawn)
   else
-    layout_horizontal(layers, nlayers, segments, flip, cv, rule_w, drawn)
+    ok = layout_horizontal(layers, nlayers, segments, flip, cv, rule_w, drawn)
+  end
+  if not ok then
+    return nil
   end
 
   local lines, decorations = {}, {}
