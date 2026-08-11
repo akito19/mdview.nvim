@@ -250,6 +250,9 @@ Falls back to a code block:
 - `<-->`, `o--o`, `x--x`: a source-end marker would collide with the box
   border, and drawing them one-directional would be semantically wrong
 - `<br/>` inside an EDGE label, which occupies a single row
+- a labelled edge whose source fans out AND whose target fans in: neither end
+  of it is that edge's alone, so there is nowhere to draw the label that a
+  reader could attach to one branch
 - a node id outside `[A-Za-z0-9_]`; mermaid documents no id grammar, and the
   conservative class also avoids the `---o` / `---x` lexing ambiguity
 - `@{ shape: ... }` node metadata, edge ids, markdown-string labels
@@ -259,6 +262,11 @@ Falls back to a code block:
 Numeric entity codes (`#35;`, `#9829;`) are left literal rather than decoded:
 decoding one would have the renderer synthesise a glyph from outside the
 verified-safe set out of pure-ASCII source (see |mdview-glyphs|).
+
+An edge label is drawn on whichever end of its edge belongs to that edge
+alone: beside the run leaving the source, or -- when the source fans out to
+several targets -- on the branch after the split, so `yes` and `no` sit on the
+branches they name rather than on the trunk above them.
 
 Layout is deterministic. Items are ordered within a layer by first appearance
 in the source rather than by crossing minimisation, so the same fence always

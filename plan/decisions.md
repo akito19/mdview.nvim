@@ -229,3 +229,46 @@ the rare case to the common one.
 the first were general. Split before extending, let the new type say what it does
 not need — and check that anything it *does* inherit still has the conditions
 that made it right.
+
+## 9. Edge labels are anchored to the end that is not shared
+
+[Issue #7](https://github.com/akito19/mdview.nvim/issues/7). An edge label was
+positioned relative to its segment's **source** port. In a fan-out every segment
+leaves the same port, so `A -->|yes| B` and `A -->|no| C` put both labels on the
+shared trunk *before* the split — and horizontally next to each other on one run,
+where `yes─no` reads as a single token.
+
+**This was a wrong diagram, not a cosmetic defect**, and that distinction is the
+decision. The labels were real and the boxes were right; what was lost was the
+attachment between them, which is the entire content of an edge label. Decision 7
+already says a diagram whose meaning is not recoverable from the output must not
+be drawn at all, so "the label is a bit off" was never the correct reading of the
+symptom. A labelled `yes` / `no` fan-out is also one of the most common
+flowcharts there is, so it was not an exotic corner either.
+
+**The fix is a second label band per channel.** The channel now runs `pre band |
+jog band | post band | marker`. A segment sits on its source coordinate until its
+jog and on its target coordinate afterwards, so the post band is the first place
+in the channel where a fan-out's branches are already apart. A label goes in
+whichever band belongs to it alone: pre when the source is unshared — today's
+behaviour, so nothing without a fan-out moved — post when the source is shared
+but the target is not.
+
+**A fan-in therefore keeps the source anchor**, which is why the rule is a
+comparison of both ends rather than "use the target". `B -->|yes| D` and
+`C -->|no| D` meet at one box: the source side is where they are still
+distinguishable, and anchoring at the target would have reproduced the same bug
+mirrored.
+
+**An edge with both ends shared bails the whole fence.** `A -->|x| B` alongside
+`A -->|y| B`, or a labelled fan-out crossing a fan-in, owns no run in its
+channel — the source-side run is shared with its siblings, the target-side run
+with the edges arriving beside it. There is no placement to choose, so the fence
+falls back to the code block. This is the first bail decided during *layout*
+rather than during parsing: the source is well formed and only the channel plan
+knows there is nowhere to put the label. It reaches the renderer as the same
+`nil` an empty canvas does, which is why no new plumbing was needed.
+
+**Rule extracted:** when a decoration names a relationship, its position is not
+presentation — it is the relationship. Ask which end of an edge a label belongs
+to before asking where on the line it looks best.

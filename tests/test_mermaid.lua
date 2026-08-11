@@ -643,6 +643,47 @@ local LR = "flowchart LR\nA[Parse] --> B[Layout] --> C[Draw]"
 local LR_LABEL = "flowchart LR\nA[Check] -->|ok| B[Done]"
 local LR_FANOUT = "flowchart LR\nA[Root] --> B[Left]\nA --> C[Right]"
 local LR_LONG = "flowchart LR\nA --> B\nB --> C\nA --> C"
+-- A LABELLED fan-out, the shape issue #7 is about: every segment leaves one
+-- port, so a label anchored to the source lands on the shared trunk and cannot
+-- be attributed to a branch. Both the two-label and the one-label form are
+-- pinned -- the one-label form is the more misleading of the two, since a label
+-- on the trunk then looks like it applies to the unlabelled branch as well.
+--
+-- The fan-in sources are the control: their labels must STAY on the source
+-- side, which is what would break if the anchor were unconditionally the target.
+local FANOUT_LABELS = "flowchart TD\nA[Root] -->|yes| B[Left]\nA -->|no| C[Right]"
+local FANOUT_ONE_LABEL = "flowchart TD\nA --> B\nA -->|no| C"
+local FANIN_LABELS = "flowchart TD\nB -->|yes| D\nC -->|no| D"
+local LR_FANOUT_LABELS = "flowchart LR\nA[Root] -->|yes| B[Left]\nA -->|no| C[Right]"
+local LR_FANOUT_ONE_LABEL = "flowchart LR\nA --> B\nA -->|no| C"
+local LR_FANIN_LABELS = "flowchart LR\nB -->|yes| D\nC -->|no| D"
+local BT_FANOUT_LABELS = "flowchart BT\nA[Root] -->|yes| B[Left]\nA -->|no| C[Right]"
+local RL_FANOUT_LABELS = "flowchart RL\nA[Root] -->|yes| B[Left]\nA -->|no| C[Right]"
+
+-- Every golden source, for the two properties asserted over all of them below.
+-- One list rather than two copies: a source added to only one of them is a case
+-- that silently stops being checked under `ambiwidth = "double"`.
+local ALL = {
+  CHAIN,
+  FANOUT,
+  DIAMOND,
+  LONG,
+  LABEL,
+  MULTILINE,
+  MARKERS,
+  LR,
+  LR_LABEL,
+  LR_FANOUT,
+  LR_LONG,
+  FANOUT_LABELS,
+  FANOUT_ONE_LABEL,
+  FANIN_LABELS,
+  LR_FANOUT_LABELS,
+  LR_FANOUT_ONE_LABEL,
+  LR_FANIN_LABELS,
+  BT_FANOUT_LABELS,
+  RL_FANOUT_LABELS,
+}
 
 T["layout"]["a chain runs straight down"] = function()
   -- Ports, not boxes, are what get aligned: `Parse` is 9 columns wide and
@@ -673,6 +714,66 @@ T["layout"]["a fan-out splits in the channel"] = function()
     "┌───┴──┐  ┌───┴───┐",
     "│ Left │  │ Right │",
     "└──────┘  └───────┘",
+  })
+end
+
+T["layout"]["a labelled fan-out labels the branches, not the trunk"] = function()
+  -- Issue #7. A channel has two label bands: one BEFORE its jog rows, on the
+  -- source-side run, and one AFTER them, on the target-side run. Both these
+  -- edges leave Root's port, so the source-side run is shared and neither label
+  -- could be attributed there; both go in the post band instead, where each
+  -- segment has already jogged onto its own target column.
+  --
+  -- That is the row between the jog and the markers: `yes` sits beside the
+  -- column that ends at `Left`, `no` beside the one that ends at `Right`.
+  eq(rows(FANOUT_LABELS), {
+    "     ┌──────┐",
+    "     │ Root │",
+    "     └───┬──┘",
+    "    ┌────┴────┐",
+    "    │yes      │no",
+    "    v         v",
+    "┌───┴──┐  ┌───┴───┐",
+    "│ Left │  │ Right │",
+    "└──────┘  └───────┘",
+  })
+end
+
+T["layout"]["only the labelled branch of a fan-out carries the label"] = function()
+  -- The misleading half of issue #7: with one branch labelled, a label on the
+  -- shared trunk reads as applying to both. The post band puts it on C's own
+  -- column, so B's branch is visibly bare -- the row still exists, because the
+  -- band is sized by the widest label in it and B's segment simply draws its
+  -- line through it.
+  eq(rows(FANOUT_ONE_LABEL), {
+    "   ┌───┐",
+    "   │ A │",
+    "   └─┬─┘",
+    "  ┌──┴───┐",
+    "  │      │no",
+    "  v      v",
+    "┌─┴─┐  ┌─┴─┐",
+    "│ B │  │ C │",
+    "└───┘  └───┘",
+  })
+end
+
+T["layout"]["a labelled fan-in keeps its labels on the source side"] = function()
+  -- The control for the case above. Here the shared end is the TARGET, so the
+  -- source-side run of each segment is that edge's alone and the labels stay in
+  -- the pre band -- above the jog, beside the column leaving their own box.
+  -- Anchoring unconditionally to the target would pile both onto D's trunk and
+  -- reintroduce issue #7 the other way round.
+  eq(rows(FANIN_LABELS), {
+    "┌───┐  ┌───┐",
+    "│ B │  │ C │",
+    "└─┬─┘  └─┬─┘",
+    "  │yes   │no",
+    "  └───┬──┘",
+    "      v",
+    "    ┌─┴─┐",
+    "    │ D │",
+    "    └───┘",
   })
 end
 
@@ -818,6 +919,91 @@ T["layout"]["an LR fan-out jogs in the channel"] = function()
   })
 end
 
+T["layout"]["an LR labelled fan-out labels the branches, not the trunk"] = function()
+  -- The horizontal half of issue #7, and the worse-reading one: both labels used
+  -- to sit on the shared run out of Root as `├yes─no──┤`, which reads as a
+  -- single token. The post band is the stretch of channel after the jog column,
+  -- where each segment is already on its target's row, so each label is drawn on
+  -- the branch it belongs to.
+  --
+  -- Label first, then a separating column, exactly as the pre-band `├ok─>┤` of
+  -- LR_LABEL: `┌yes─>┤ Left │`. The band is one label wide even with two labels
+  -- in it, because labels on different rows share a slot.
+  eq(rows(LR_FANOUT_LABELS), {
+    "              ┌───────┐",
+    "        ┌yes─>┤ Left  │",
+    "┌──────┐│     └───────┘",
+    "│ Root ├┤",
+    "└──────┘│     ┌───────┐",
+    "        └no──>┤ Right │",
+    "              └───────┘",
+  })
+end
+
+T["layout"]["only the labelled branch of an LR fan-out carries the label"] = function()
+  -- As FANOUT_ONE_LABEL, horizontally. `no` is on C's run alone; B's run is the
+  -- same length but bare, so the two branches are told apart by the label rather
+  -- than by a convention the output does not state.
+  eq(rows(LR_FANOUT_ONE_LABEL), {
+    "          ┌───┐",
+    "     ┌───>┤ B │",
+    "┌───┐│    └───┘",
+    "│ A ├┤",
+    "└───┘│    ┌───┐",
+    "     └no─>┤ C │",
+    "          └───┘",
+  })
+end
+
+T["layout"]["an LR labelled fan-in keeps its labels on the source side"] = function()
+  -- The horizontal control: the shared end is D, so both labels stay in the pre
+  -- band, on the run leaving their own box and before the jog column they share.
+  eq(rows(LR_FANIN_LABELS), {
+    "┌───┐",
+    "│ B ├yes─┐",
+    "└───┘    │ ┌───┐",
+    "         ├>┤ D │",
+    "┌───┐    │ └───┘",
+    "│ C ├no──┘",
+    "└───┘",
+  })
+end
+
+T["layout"]["the fan-out fix is orientation independent"] = function()
+  -- Issue #7 reproduced on all four directions, so both reversed layouts are
+  -- pinned too. `BT` is `TB` with the channel rows counted the other way, so the
+  -- band order is unchanged relative to the source box: markers nearest the
+  -- target, then the post-band labels, then the jog.
+  eq(rows(BT_FANOUT_LABELS), {
+    "┌──────┐  ┌───────┐",
+    "│ Left │  │ Right │",
+    "└───┬──┘  └───┬───┘",
+    "    ^         ^",
+    "    │yes      │no",
+    "    └────┬────┘",
+    "     ┌───┴──┐",
+    "     │ Root │",
+    "     └──────┘",
+  })
+  -- `RL` is `LR` with the channel columns counted the other way, and each label
+  -- is again on its own branch's run. Its exact position is off by its own width
+  -- -- a span is placed at a column and grows rightwards, which mirrors wrongly
+  -- in a leftward channel, so `yes` sits past the end of the run rather than at
+  -- its head and covers the corner glyph it should stop before. That is a
+  -- PRE-EXISTING horizontal-label defect, visible on `flowchart RL` with a
+  -- single labelled edge long before this change and orthogonal to it: the label
+  -- is attributable here, which is what issue #7 is about.
+  eq(rows(RL_FANOUT_LABELS), {
+    "┌───────┐",
+    "│ Left  ├<───yes",
+    "└───────┘     │┌──────┐",
+    "              ├┤ Root │",
+    "┌───────┐     │└──────┘",
+    "│ Right ├<───no",
+    "└───────┘",
+  })
+end
+
 T["layout"]["an LR edge spanning two layers routes past the layer between"] = function()
   -- The horizontal counterpart of LONG, and the only golden that draws a
   -- horizontal dummy: A --> C skips B's layer, so it gets a dummy there and
@@ -883,9 +1069,11 @@ T["layout"]["equal width"]["every row of a diagram is the same width"] = functio
   -- a box, and with a label in it that width is a label span rounded up to
   -- whole `─` columns -- the one number in the layout that is not obvious by
   -- inspection under "double".
-  for _, src in
-    ipairs({ CHAIN, FANOUT, DIAMOND, LONG, LABEL, MULTILINE, MARKERS, LR, LR_LABEL, LR_FANOUT, LR_LONG })
-  do
+  --
+  -- The labelled fan-outs are exactly that number twice over: their channels are
+  -- sized from two label bands rather than one, so a rounding error in either
+  -- band shows up here as a row that is a cell short.
+  for _, src in ipairs(ALL) do
     local lines = draw(src).lines
     local widths = {}
     for _, line in ipairs(lines) do
@@ -914,9 +1102,7 @@ T["layout"]["equal width"]["only verified-safe glyphs are drawn"] = function(amb
     ["┘"] = true,
   }
   local found = {}
-  for _, src in
-    ipairs({ CHAIN, FANOUT, DIAMOND, LONG, LABEL, MULTILINE, MARKERS, LR, LR_LABEL, LR_FANOUT, LR_LONG })
-  do
+  for _, src in ipairs(ALL) do
     for _, line in ipairs(draw(src).lines) do
       for _, char in ipairs(vim.fn.split(line, "\\zs")) do
         if #char > 1 and not SAFE[char] then
@@ -1036,6 +1222,37 @@ T["fallback"]["render returns nil when a valid parse draws nothing"] = function(
     eq({ src, mermaid.parse(lines) ~= nil }, { src, true })
     eq({ src, mermaid.render(lines) }, { src, nil })
   end
+end
+
+T["fallback"]["render returns nil when a label cannot be attributed"] = function()
+  -- Also not bails: both parse cleanly, and the refusal happens in the layout.
+  -- An edge whose source fans out AND whose target fans in owns no run in its
+  -- channel -- the source-side run is shared with its siblings and the
+  -- target-side one with the edges arriving alongside it -- so there is nowhere
+  -- to draw the label that a reader could attach to one edge. A label the reader
+  -- cannot attribute is a wrong diagram, not a missing one, so the fence falls
+  -- back to the code block whole.
+  --
+  -- Two parallel labelled edges are the smallest instance (`A -->|x| B` twice
+  -- over is a fan-out and a fan-in between the same pair of boxes); the second
+  -- source is the general one, where the two ends are shared with different
+  -- edges.
+  for _, src in ipairs({
+    "flowchart TD\nA -->|x| B\nA -->|y| B",
+    "flowchart TD\nA -->|x| C\nA --> D\nB --> C",
+    "flowchart LR\nA -->|x| B\nA -->|y| B",
+    "flowchart LR\nA -->|x| C\nA --> D\nB --> C",
+  }) do
+    local lines = vim.split(src, "\n", { plain = true })
+    eq({ src, mermaid.parse(lines) ~= nil }, { src, true })
+    eq({ src, mermaid.render(lines) }, { src, nil })
+  end
+end
+
+T["fallback"]["an unlabelled fan-out crossing a fan-in still draws"] = function()
+  -- The bail is about the LABEL, not about the shape: the same graph without one
+  -- has nothing to attribute and renders as before.
+  eq(mermaid.render(vim.split("flowchart TD\nA --> C\nA --> D\nB --> C", "\n", { plain = true })) ~= nil, true)
 end
 
 T["fallback"]["the block marker style has no box drawing to fall back on"] = function()

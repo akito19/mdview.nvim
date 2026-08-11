@@ -472,6 +472,83 @@ Where this section and the sections above disagree, this section wins.
    renderer keeps its own `#diagram.lines > 0` guard as belt and braces, because
    that is the branch which loses the text.
 
+## Amendments from stage 4 (edge label attribution, issue #7)
+
+Step 8 above says an edge label is "placed on the edge's first vertical run".
+That was wrong for a fan-out, and wrong in the way this design cares about most:
+every segment leaves the same source port, so every label landed on the shared
+trunk *before* the split and could not be attributed to a branch. Horizontally
+they abutted on one run and read as a single token — `├yes─no──┤`. Where this
+section and the sections above disagree, this section wins.
+
+1. **A channel has two label bands, not one.** The row (or column) order is now
+   `pre band | jog band | post band | marker`.
+
+   A segment's run sits on its source coordinate for the rows up to and
+   including its jog, and on its target coordinate after it. So a label in the
+   **pre** band is on the source-side run — the old behaviour, and the whole of
+   it for a diagram with no fan-out — while a label in the **post** band is on
+   the target-side run, after every jog in the channel and therefore after any
+   split.
+
+   The post band rests on one guarantee: targets within a layer have distinct
+   ports, so of the segments sharing a source port at most one can run straight
+   and the rest must jog. In the post band every segment is on its own target
+   coordinate.
+
+   `label_col` is unchanged in logic but is passed the anchor coordinate of the
+   band and **only that band's occupied coordinates** — the `cx` of every segment
+   for the pre band, the `tx` of every segment for the post band. It used to be
+   given both sets for every label, which could push a label aside for a run that
+   is nowhere near it.
+
+2. **The anchor is whichever end of the segment is not shared.** Per channel,
+   count the non-invisible segments leaving each source *item* and arriving at
+   each target *item* — item identity, not coordinate, since two boxes can share
+   a column by coincidence of layout. An invisible (`~~~`) segment draws nothing,
+   so it counts towards neither.
+
+   | source shared | target shared | anchor |
+   |---|---|---|
+   | no | either | **pre**, at `cx` / `cy` |
+   | yes | no | **post**, at `tx` / `ty` |
+   | yes | yes | **bail** |
+
+3. **A fan-in keeps the source anchor**, and that is the reason the rule is a
+   table rather than "anchor at the target". `B -->|yes| D` and `C -->|no| D`
+   leave different boxes and meet at one: the source side is the side on which
+   they are still distinguishable, and anchoring at the target would reintroduce
+   exactly this bug the other way round.
+
+4. **Both ends shared is a hard bail** — `M.draw` returns `nil` and the fence
+   renders as the labelled code block. `A -->|x| B` twice over, or a labelled
+   fan-out crossing a fan-in (`A -->|x| C` / `A --> D` / `B --> C`), leaves the
+   edge owning no run in its channel: not the source-side run, which its siblings
+   share, and not the target-side one, which the edges arriving alongside it
+   share. There is no placement a reader could attribute, and a label that cannot
+   be attached to an edge is a *wrong* diagram rather than a missing one.
+
+   The bail is decided during layout, not during `M.parse` — the source is well
+   formed, and only the channel plan knows there is nowhere to put the label.
+   Same shape as amendment 9 of the previous section: a successful parse whose
+   draw yields nothing, reaching the renderer as the same `nil` a parse bail
+   does.
+
+5. **Both channel planners return a plan table**, `{ size, pre, jogs, post,
+   widest_pre, widest_post }`, rather than a tuple that would now be six values
+   wide. Horizontally `pre` and `post` are widths in columns — a horizontal band
+   is as wide as the labels in it — and the channel is
+   `max(3, pre_w + nj + post_w + 1)` columns; vertically they are row counts and
+   the channel is `npre + nj + npost + 1` rows.
+
+6. **`RL` still places a horizontal label a label-width to the right of where it
+   belongs.** A span is placed at a column and grows rightwards, which mirrors
+   wrongly in a channel whose columns count leftwards, so the label overruns the
+   end of its run. Pre-existing, orthogonal to this fix and visible on a single
+   labelled `flowchart RL` edge long before it; the `RL` golden pins it with a
+   comment saying so. The label is on the right branch, which is what issue #7
+   is about.
+
 ## Deliberately deferred
 
 Follow-up issues, not silent gaps: `subgraph` containers, cycles / back edges,
