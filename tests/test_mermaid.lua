@@ -659,6 +659,9 @@ local LR_FANOUT_ONE_LABEL = "flowchart LR\nA --> B\nA -->|no| C"
 local LR_FANIN_LABELS = "flowchart LR\nB -->|yes| D\nC -->|no| D"
 local BT_FANOUT_LABELS = "flowchart BT\nA[Root] -->|yes| B[Left]\nA -->|no| C[Right]"
 local RL_FANOUT_LABELS = "flowchart RL\nA[Root] -->|yes| B[Left]\nA -->|no| C[Right]"
+-- The `RL` mirror of LR_LABEL. Issue #14: the smallest diagram that shows a
+-- horizontal label written rightwards out of a leftward run.
+local RL_LABEL = "flowchart RL\nA[Check] -->|ok| B[Done]"
 
 -- Every golden source, for the two properties asserted over all of them below.
 -- One list rather than two copies: a source added to only one of them is a case
@@ -683,6 +686,7 @@ local ALL = {
   LR_FANIN_LABELS,
   BT_FANOUT_LABELS,
   RL_FANOUT_LABELS,
+  RL_LABEL,
 }
 
 T["layout"]["a chain runs straight down"] = function()
@@ -899,6 +903,40 @@ T["layout"]["an LR edge label sits on its horizontal run"] = function()
   })
 end
 
+T["layout"]["an RL edge label stays inside its own run"] = function()
+  -- Issue #14. Under `RL` the run advances right-to-left while a span still
+  -- grows rightwards, so the label used to be written from the slot's rightmost
+  -- column outwards and landed on `Check`'s left border -- `├<──ok Check │`,
+  -- an unclosed box, which is a wrong diagram rather than a cosmetic slip.
+  --
+  -- It is now the exact mirror of LR_LABEL: label flush against the box it
+  -- leaves, then the run, then the marker at the box it enters.
+  eq(rows(RL_LABEL), {
+    "┌──────┐    ┌───────┐",
+    "│ Done ├<─ok┤ Check │",
+    "└──────┘    └───────┘",
+  })
+end
+
+T["layout"]["an RL edge label's decoration covers the label"] = function()
+  -- The byte range is recorded where the span is written, so moving the anchor
+  -- should carry it -- but nothing asserted that under `RL`, which is how the
+  -- overrun above stayed invisible to the suite. Checked in both bands: the
+  -- single edge is pre-anchored, the fan-out branches post-anchored.
+  local function label_decs(src)
+    local res = draw(src)
+    local out = {}
+    for _, d in ipairs(res.decorations) do
+      if d.group == "MdviewMermaidEdgeLabel" then
+        out[#out + 1] = res.lines[d.line + 1]:sub(d.col_start + 1, d.col_end)
+      end
+    end
+    return out
+  end
+  eq(label_decs(RL_LABEL), { "ok" })
+  eq(label_decs(RL_FANOUT_LABELS), { "yes", "no" })
+end
+
 T["layout"]["an LR fan-out jogs in the channel"] = function()
   -- The horizontal counterpart of FANOUT, and the only golden that exercises
   -- the `seg.cy ~= seg.ty` path: both targets sit off Root's port row, so each
@@ -986,20 +1024,15 @@ T["layout"]["the fan-out fix is orientation independent"] = function()
     "     └──────┘",
   })
   -- `RL` is `LR` with the channel columns counted the other way, and each label
-  -- is again on its own branch's run. Its exact position is off by its own width
-  -- -- a span is placed at a column and grows rightwards, which mirrors wrongly
-  -- in a leftward channel, so `yes` sits past the end of the run rather than at
-  -- its head and covers the corner glyph it should stop before. That is a
-  -- PRE-EXISTING horizontal-label defect, visible on `flowchart RL` with a
-  -- single labelled edge long before this change and orthogonal to it: the label
-  -- is attributable here, which is what issue #7 is about.
+  -- is again on its own branch's run -- `<─yes┐` mirroring LR's `┌yes─>`, so the
+  -- label ends where the jog corner begins instead of overwriting it (issue #14).
   eq(rows(RL_FANOUT_LABELS), {
     "┌───────┐",
-    "│ Left  ├<───yes",
+    "│ Left  ├<─yes┐",
     "└───────┘     │┌──────┐",
     "              ├┤ Root │",
     "┌───────┐     │└──────┘",
-    "│ Right ├<───no",
+    "│ Right ├<──no┘",
     "└───────┘",
   })
 end

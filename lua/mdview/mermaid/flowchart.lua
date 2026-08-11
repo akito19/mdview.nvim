@@ -1226,14 +1226,13 @@ local function draw_segment_h(cv, seg, cols, plan, right)
     local post = seg.label_band == "post"
     local base = post and (plan.pre + plan.jogs) or 0
     local width = post and plan.widest_post or plan.widest_pre
-    cv_span(
-      cv,
-      post and seg.ty or seg.cy,
-      cols[base + seg.label_slot * (width + 1)],
-      seg.label,
-      seg.label_cols,
-      GROUP_EDGE_LABEL
-    )
+    local head = base + seg.label_slot * (width + 1)
+    -- `cols` counts in run order, leftwards under `RL`, but a span always grows
+    -- rightwards -- so a leftward run anchors at the slot's far index instead,
+    -- keeping the label inside the columns the slot reserved and flush against
+    -- the box it leaves.
+    local anchor = cols[right and head or head + seg.label_cols - 1]
+    cv_span(cv, post and seg.ty or seg.cy, anchor, seg.label, seg.label_cols, GROUP_EDGE_LABEL)
   end
 end
 
